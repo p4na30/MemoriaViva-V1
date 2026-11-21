@@ -1,0 +1,52 @@
+{
+  "paciente": {
+    "id": "don_manuel",
+    "tipo_perfil": "simulacion_clinica",
+    "nombre_completo": "Manuel González Magaña",
+    "nombre_preferido": "Don Manuel",
+    "edad": 72,
+    "ciudad_residencia": "San Pedro Tlaquepaque, Jalisco",
+    "ocupacion_historica": "Maquinista y mecánico en Ferrocarriles Nacionales de México durante 32 años"
+  },
+  "red_familiar_y_afectiva": {
+    "esposa_finada": "Doña Carmen (se conocieron en la plaza de Tlaquepaque en 1975)",
+    "hija_mayor_cuidadora": {
+      "nombre": "Laura",
+      "ciudad": "Guadalajara",
+      "detalle": "Lo visita entre semana y cena con él los jueves"
+    },
+    "hija_menor": {
+      "nombre": "Rocío",
+      "ciudad": "Manzanillo, Colima",
+      "ocupacion": "Maestra de primaria",
+      "detalle": "Le habla por teléfono todos los domingos a mediodía"
+    },
+    "nietos": [
+      {
+        "nombre": "Mateo",
+        "edad": 14,
+        "gusto_compartido": "Jugar dominó los martes por la tarde y hablar del Atlas"
+      },
+      {
+        "nombre": "Sofía",
+        "edad": 9,
+        "gusto_compartido": "Le gusta que Don Manuel le dibuje trenes"
+      }
+    ]
+  },
+  "anclas_de_reminiscencia": [
+    "Su primer automóvil fue un Volkswagen Sedán (Vocho) azul modelo 1974 que él mismo arreglaba",
+    "Su música favorita son los boleros del Trío Los Panchos y Agustín Lara (especialmente 'Solamente una vez')",
+    "En 1988 llevó a toda la familia a conocer el mar en Miramar, Manzanillo, y se hospedaron en las cabañas San Pedrito"
+  ],
+  "recuerdos_aprendidos": [],
+  "rutinas_salud_suaves": [
+    "Tomar un vaso de agua a las 12:30 p.m.",
+    "Usar su suéter tejido gris cuando baja la temperatura por la tarde"
+  ],
+  "contacto_emergencia_telegram": {
+    "nombre": "Laura González",
+    "parentesco": "Hija",
+    "chat_id": ""
+  }
+}

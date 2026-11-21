@@ -1,0 +1,23 @@
+[
+  { "day_number": 1,  "date_label": "Día 1",  "mattr": 0.76, "mean_pause": 1.05, "anomic_pauses": 0, "repetitions": 0, "mood": "Alegre", "circadian_period": "matutino" },
+  { "day_number": 2,  "date_label": "Día 2",  "mattr": 0.75, "mean_pause": 1.12, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 3,  "date_label": "Día 3",  "mattr": 0.77, "mean_pause": 1.01, "anomic_pauses": 0, "repetitions": 0, "mood": "Alegre", "circadian_period": "matutino" },
+  { "day_number": 4,  "date_label": "Día 4",  "mattr": 0.74, "mean_pause": 1.15, "anomic_pauses": 1, "repetitions": 0, "mood": "Nostálgico", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 5,  "date_label": "Día 5",  "mattr": 0.78, "mean_pause": 0.98, "anomic_pauses": 0, "repetitions": 0, "mood": "Alegre", "circadian_period": "matutino" },
+  { "day_number": 6,  "date_label": "Día 6",  "mattr": 0.75, "mean_pause": 1.09, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 7,  "date_label": "Día 7",  "mattr": 0.76, "mean_pause": 1.11, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 8,  "date_label": "Día 8",  "mattr": 0.73, "mean_pause": 1.19, "anomic_pauses": 1, "repetitions": 0, "mood": "Nostálgico", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 9,  "date_label": "Día 9",  "mattr": 0.77, "mean_pause": 1.04, "anomic_pauses": 0, "repetitions": 0, "mood": "Alegre", "circadian_period": "matutino" },
+  { "day_number": 10, "date_label": "Día 10", "mattr": 0.75, "mean_pause": 1.13, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 11, "date_label": "Día 11", "mattr": 0.74, "mean_pause": 1.16, "anomic_pauses": 1, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 12, "date_label": "Día 12", "mattr": 0.76, "mean_pause": 1.08, "anomic_pauses": 0, "repetitions": 0, "mood": "Alegre", "circadian_period": "matutino" },
+  { "day_number": 13, "date_label": "Día 13", "mattr": 0.75, "mean_pause": 1.14, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 14, "date_label": "Día 14", "mattr": 0.75, "mean_pause": 1.15, "anomic_pauses": 0, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "matutino" },
+  { "day_number": 15, "date_label": "Día 15", "mattr": 0.72, "mean_pause": 1.25, "anomic_pauses": 1, "repetitions": 0, "mood": "Nostálgico", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 16, "date_label": "Día 16", "mattr": 0.70, "mean_pause": 1.48, "anomic_pauses": 2, "repetitions": 0, "mood": "Tranquilo", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 17, "date_label": "Día 17", "mattr": 0.65, "mean_pause": 1.95, "anomic_pauses": 3, "repetitions": 1, "mood": "Pensativo", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 18, "date_label": "Día 18", "mattr": 0.62, "mean_pause": 2.30, "anomic_pauses": 4, "repetitions": 1, "mood": "Cansado", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 19, "date_label": "Día 19", "mattr": 0.59, "mean_pause": 2.65, "anomic_pauses": 5, "repetitions": 2, "mood": "Frustrado", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 20, "date_label": "Día 20", "mattr": 0.57, "mean_pause": 2.88, "anomic_pauses": 5, "repetitions": 2, "mood": "Nostálgico", "circadian_period": "vespertino_sundowning" },
+  { "day_number": 21, "date_label": "Día 21", "mattr": 0.55, "mean_pause": 3.12, "anomic_pauses": 6, "repetitions": 3, "mood": "Alerta Preventiva", "circadian_period": "vespertino_sundowning" }
+]

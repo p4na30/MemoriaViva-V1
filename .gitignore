@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+
+# Environment & Secrets
+.env
+.env.local
+*.keystore
+*.jks
+
+# Runtime data (generated per instance)
+data/memoriaviva.db
+data/memoriaviva.db-journal
+data/memoriaviva.db-wal
+data/memoriaviva.db-shm
+data/account_config.json
+data/photos/
+!data/sample_assets/
+!data/profiles/don_manuel_simulacion.json
+!data/history_21_days.json
+
+# Frontend & Mobile
+frontend/node_modules/
+frontend/dist/
+frontend/android/
+frontend/.vite/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.log

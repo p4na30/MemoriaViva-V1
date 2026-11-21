@@ -622,7 +622,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           <div className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums leading-none drop-shadow">
             {timeFormatted}
           </div>
-          <p className="text-sm sm:text-base text-slate-200 capitalize mt-1 drop-shadow">
+          <p className="text-sm sm:text-base text-slate-200 mt-1 drop-shadow">
             {dayFormatted} · Compañero de {elderName}
           </p>
           {currentPhoto && (

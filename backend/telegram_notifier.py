@@ -19,10 +19,36 @@ import requests
 
 from backend.audio_engine import synthesize_elder_voice
 from backend.config import (
+    get_local_now,
     get_telegram_bot_token,
     get_telegram_bot_username,
     get_telegram_default_chat_id,
 )
+
+EMOTION_LABELS_ES: Dict[str, str] = {
+    "tranquilo": "Tranquilo",
+    "alegre": "Alegre",
+    "nostalgico": "Nostálgico",
+    "frustrado": "Frustrado",
+    "crisis_desorientacion": "Crisis · desorientación",
+}
+
+
+def format_emotion_es(raw: str) -> str:
+    key = (raw or "tranquilo").strip().lower()
+    return EMOTION_LABELS_ES.get(key, key.replace("_", " ").capitalize())
+
+
+def _resolve_app_caregiver_names(cfg: Dict[str, Any], fallback_first: str = "") -> tuple[str, str]:
+    """Return (display_name, voice_first_name) prioritizing the app-configured caregiver name."""
+    raw_name = str(cfg.get("caregiver_name") or "").strip()
+    if raw_name:
+        first_pila = raw_name.split()[0].strip()
+        return raw_name, first_pila or "su familiar"
+    fb = fallback_first.strip()
+    if fb:
+        return fb, fb.split()[0].strip() or "su familiar"
+    return "Familiar", "su familiar"
 from backend.database import DatabaseManager
 
 
@@ -245,11 +271,13 @@ class TelegramNotifier:
 
         link = paired_links[0]
         pid = link["profile_id"]
-        sender = link.get("telegram_first_name") or first_name
         profile = storage.load_profile(pid)
         elder_name = profile.get("paciente", {}).get("nombre_preferido", "Don Manuel")
         cfg = storage.load_account_config()
         voice_gender = cfg.get("voice_gender", "male")
+        sender_display, sender_voice = _resolve_app_caregiver_names(
+            cfg, fallback_first=str(link.get("telegram_first_name") or first_name)
+        )
 
         # Subcase 2A: Family sent a Photo
         photos = msg.get("photo")
@@ -262,10 +290,10 @@ class TelegramNotifier:
                 short_caption = (
                     caption[:280].rstrip() + "…" if len(caption) > 280 else caption
                 )
-                photo_title = f"Foto enviada por {sender}"
-                photo_caption = short_caption or f"Recuerdo recién compartido por {sender} desde Telegram."
+                photo_title = f"Foto enviada por {sender_display}"
+                photo_caption = short_caption or f"Recuerdo recién compartido por {sender_display} desde Telegram."
                 saved = storage.save_uploaded_photo(
-                    original_filename=f"telegram_{sender}.jpg",
+                    original_filename=f"telegram_{sender_voice}.jpg",
                     raw_bytes=raw_bytes,
                     profile_id=pid,
                     title=photo_title,
@@ -273,14 +301,14 @@ class TelegramNotifier:
                     theme="familia_hogar",
                 )
                 spoken_text = (
-                    f"{elder_name}, {sender} le acaba de enviar una nueva foto familiar. "
+                    f"{elder_name}, {sender_voice} le acaba de enviar una nueva foto familiar. "
                     + (f"Dice: {short_caption}" if short_caption else "Mire qué bonito recuerdo llegó a su marco.")
                 )
                 audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
                 inbound = self.db.insert_inbound_family_message(
                     profile_id=pid,
                     link_uuid=link["link_uuid"],
-                    sender_name=sender,
+                    sender_name=sender_display,
                     message_type="photo",
                     text_content=spoken_text,
                     photo_filename=saved["filename"],
@@ -289,7 +317,7 @@ class TelegramNotifier:
                 self.db.insert_telegram_log(
                     profile_id=pid,
                     level=1,
-                    title=f"Foto recibida de {sender} -> Kiosco",
+                    title=f"Foto recibida de {sender_display} → Kiosco",
                     message=photo_caption,
                     delivered=True,
                     channel_status="delivered_telegram",
@@ -309,12 +337,12 @@ class TelegramNotifier:
         # Subcase 2B: Family sent a Text Message
         if text:
             short_text = text[:280].rstrip() + "…" if len(text) > 280 else text
-            spoken_text = f"Recado cariñoso de {sender}: {short_text}"
+            spoken_text = f"Recado de {sender_voice}: {short_text}"
             audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
             inbound = self.db.insert_inbound_family_message(
                 profile_id=pid,
                 link_uuid=link["link_uuid"],
-                sender_name=sender,
+                sender_name=sender_display,
                 message_type="text",
                 text_content=spoken_text,
                 photo_filename=None,
@@ -323,7 +351,7 @@ class TelegramNotifier:
             self.db.insert_telegram_log(
                 profile_id=pid,
                 level=1,
-                title=f"Recado de {sender} -> Kiosco",
+                title=f"Recado de {sender_display} → Kiosco",
                 message=short_text,
                 delivered=True,
                 channel_status="delivered_telegram",
@@ -535,7 +563,7 @@ class TelegramNotifier:
         """Level 1 (Green): Warm daily pulse without raw transcript or audio."""
         title = f"Nivel 1 · Pulso Diario de {elder_name}"
         body = (
-            f"Estado emocional: {emotional_state.replace('_', ' ').capitalize()}.\n"
+            f"Estado emocional: {format_emotion_es(emotional_state)}.\n"
             f"Resumen (Filtro de Privacidad): {topic_summary}\n"
             f"Sugerencia para la cena: {dinner_tip}"
         )
@@ -594,8 +622,10 @@ class TelegramNotifier:
         sync: bool = False,
     ) -> Dict[str, Any]:
         """Level 3 (Red): Immediate S.O.S. alert upon acute disorientation or distress."""
+        now_hhmm = get_local_now().strftime("%H:%M")
         title = f"Nivel 3 · ALERTA ROJA S.O.S. ({elder_name})"
         body = (
+            f"Hora local: {now_hhmm}\n"
             f"Motivo: {reason}\n"
             "Acción tomada: MemoriaViva suspendió preguntas cognitivas y aplicó Contención por Validación de Naomi Feil.\n"
             f"Acción recomendada: {dinner_tip}"

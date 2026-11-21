@@ -416,6 +416,10 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
     return transcribe_audio_ram_google_free(wav_bytes)
 
 
+_TTS_RAM_CACHE: Dict[tuple[str, str], str] = {}
+_TTS_RAM_CACHE_MAX = 64
+
+
 async def _edge_tts_bytes(text: str, voice: str, rate: str, pitch: str) -> bytes:
     import edge_tts
 
@@ -434,12 +438,17 @@ def synthesize_elder_voice(
 ) -> Optional[str]:
     """Synthesize warm geriatric speech via Edge-TTS (-15% rate, -5Hz pitch) as Base64 MP3 URI.
 
-    Fails gracefully (returns None) in offline environments so the turn pipeline never crashes.
+    Uses a bounded in-RAM cache for repeated phrases and fails gracefully offline.
     """
     if not enabled or not text or not text.strip():
         return None
 
     voice = TTS_VOICE_FEMALE if voice_gender == "female" else TTS_VOICE_MALE
+    cache_key = (voice, text.strip())
+    cached = _TTS_RAM_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         try:
             loop = asyncio.get_running_loop()
@@ -460,6 +469,10 @@ def synthesize_elder_voice(
         if not mp3_bytes:
             return None
         b64 = base64.b64encode(mp3_bytes).decode("ascii")
-        return f"data:audio/mpeg;base64,{b64}"
+        data_uri = f"data:audio/mpeg;base64,{b64}"
+        if len(_TTS_RAM_CACHE) >= _TTS_RAM_CACHE_MAX:
+            _TTS_RAM_CACHE.pop(next(iter(_TTS_RAM_CACHE)))
+        _TTS_RAM_CACHE[cache_key] = data_uri
+        return data_uri
     except Exception:
         return None

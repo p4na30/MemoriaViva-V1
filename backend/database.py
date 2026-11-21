@@ -80,6 +80,18 @@ class DatabaseManager:
                 tmp_target.unlink(missing_ok=True)
 
     @contextmanager
+    def deferred_cloud_sync(self) -> Iterator[None]:
+        """Batch multiple writes into a single GCS FUSE sync at exit to cut turn latency."""
+        self._defer_sync_depth = getattr(self, "_defer_sync_depth", 0) + 1
+        try:
+            yield
+        finally:
+            self._defer_sync_depth = max(0, getattr(self, "_defer_sync_depth", 1) - 1)
+            if self._defer_sync_depth == 0:
+                with _DB_LOCK:
+                    self._sync_to_persistent()
+
+    @contextmanager
     def _connection(self, write: bool = False) -> Iterator[sqlite3.Connection]:
         with _DB_LOCK:
             conn = sqlite3.connect(str(self.working_path), timeout=10.0)
@@ -97,7 +109,7 @@ class DatabaseManager:
                 raise
             finally:
                 conn.close()
-            if write:
+            if write and getattr(self, "_defer_sync_depth", 0) == 0:
                 self._sync_to_persistent()
 
     def init_schema(self) -> None:
@@ -933,10 +945,12 @@ class DatabaseManager:
     # Demo Pitch Reset Helper
     # ------------------------------------------------------------------
     def reset_demo_state(self, profile_id: str = "don_manuel") -> None:
-        """Reset turns, reviews, telegram logs, and restore clean 21-day seed for pitch rehearsals."""
-        with self._connection(write=True) as conn:
-            conn.execute("DELETE FROM conversation_turns WHERE profile_id = ?", (profile_id,))
-            conn.execute("DELETE FROM clinical_reviews WHERE profile_id = ?", (profile_id,))
-            conn.execute("DELETE FROM telegram_logs WHERE profile_id = ?", (profile_id,))
-            conn.execute("DELETE FROM family_inbound_messages WHERE profile_id = ?", (profile_id,))
-        self.seed_longitudinal_days(profile_id=profile_id, force=True)
+        """Reset turns, reviews, telegram logs, consent rehearsals, and restore clean 21-day seed."""
+        with self.deferred_cloud_sync():
+            with self._connection(write=True) as conn:
+                conn.execute("DELETE FROM conversation_turns WHERE profile_id = ?", (profile_id,))
+                conn.execute("DELETE FROM clinical_reviews WHERE profile_id = ?", (profile_id,))
+                conn.execute("DELETE FROM telegram_logs WHERE profile_id = ?", (profile_id,))
+                conn.execute("DELETE FROM family_inbound_messages WHERE profile_id = ?", (profile_id,))
+                conn.execute("DELETE FROM consent_events WHERE profile_id = ?", (profile_id,))
+            self.seed_longitudinal_days(profile_id=profile_id, force=True)

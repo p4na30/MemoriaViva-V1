@@ -238,17 +238,23 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
                     </span>
                   </div>
                   <p className="text-sm leading-snug">{rev.clinical_notes}</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {rev.confounding_factors.map((fid) => (
-                      <span
-                        key={fid}
-                        className="px-2 py-0.5 rounded-md text-[11px] border"
-                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface)" }}
-                      >
-                        {factorLabelMap[fid] || fid}
-                      </span>
-                    ))}
-                  </div>
+                  {rev.confounding_factors.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {rev.confounding_factors.map((fid) => (
+                        <span
+                          key={fid}
+                          className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border"
+                          style={{
+                            borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                            backgroundColor: "var(--amber-soft)",
+                            color: "var(--amber)",
+                          }}
+                        >
+                          {factorLabelMap[fid] || fid}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div
                     className="text-[11px] tabular-nums flex justify-between"
                     style={{ color: "var(--text-muted)" }}
@@ -328,7 +334,7 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
           <div className="p-3.5 rounded-xl border space-y-1" style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}>
             <strong className="block">Evidencia de Biomarcadores y Mecanismo de Corrección</strong>
             <p style={{ color: "var(--text-muted)" }}>
-              MATTR (Covington &amp; McFall, 2010), habla espontánea en DCL (Fraser et al., 2016), pausas anómicas &gt;=2.0s (Pistono et al., 2016) y repetición semántica (Guinn &amp; Habash, 2012). Cualquier alerta puede ser anulada o contextualizada en el <em>Override Log</em> superior antes de generar el PDF.
+              MATTR (Covington &amp; McFall, 2010), habla espontánea en DCL (Fraser et al., 2016), pausas anómicas ≥2.0 s (Pistono et al., 2016) y repetición semántica (Guinn &amp; Habash, 2012). Cualquier alerta puede ser anulada o contextualizada en el <em>Override Log</em> superior antes de generar el PDF.
             </p>
           </div>
         </div>
@@ -349,10 +355,10 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
         <div className="clinical-card p-4 space-y-1.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Scale className="w-4 h-4" style={{ color: "var(--primary)" }} />
-            Equidad sin Sesgo Educativo
+            Equidad Auto-Referenciada
           </div>
           <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            El Z-Score de 21 días compara al adulto mayor únicamente contra su propia línea base (D1–D14), eliminando discriminación socioeconómica o regional.
+            Diseñado para reducir sesgos educativos y socioeconómicos: el Z-Score de 21 días compara a cada persona únicamente contra su propia línea base (D1–D14).
           </p>
         </div>
 

@@ -495,3 +495,60 @@ def test_production_clean_mode_starts_empty_and_records_real_days(tmp_path: Path
     assert after["evaluation"]["days_recorded"] == 1
     assert after["evaluation"]["is_calibrating_baseline"] is True
     assert after["evaluation"]["level2_alert_triggered"] is False
+
+
+def test_qa_fixes_acto3_telegram_name_accents_and_level2_parity(tmp_path: Path, monkeypatch) -> None:
+    """Verify BA QA fixes: Acto 3 Feil wording, app caregiver name in Telegram voice, accents, and N2 parity."""
+    monkeypatch.setenv("MV_DISABLE_TG_POLLING", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    db = DatabaseManager(db_path=tmp_path / "qa.db", cloud_sync=False)
+    storage = StorageManager(db=db, data_dir=tmp_path)
+    tg = TelegramNotifier(db=db)
+    app = create_app(db_manager=db, storage_manager=storage, telegram_notifier=tg)
+    client = TestClient(app)
+
+    client.post("/api/onboarding/complete", json={"use_demo_persona": True})
+
+    # 1. Acto 3 Feil validation (no deceased confirmation, 0 questions, <=35 words)
+    r3 = client.post("/api/turn", json={"demo_scenario_id": "demo_3_crisis", "skip_tts": True})
+    assert r3.status_code == 200
+    reply3 = r3.json()["assistant_reply"]
+    assert "?" not in reply3 and "¿" not in reply3
+    assert "corazón" not in reply3.lower()
+    assert "Doña Carmen" in reply3
+    assert "Laura" in reply3
+    assert len(reply3.split()) <= 35
+
+    # 2. Level 1 Telegram formats "nostalgico" with accent "Nostálgico"
+    l1 = tg.send_level1_daily_pulse("don_manuel", "Don Manuel", "nostalgico", "Recordó boleros", "Ponle un bolero")
+    assert "Nostálgico" in l1["message"]
+
+    # 3. Level 2 Telegram uses the exact same evaluation metrics as /api/state
+    st_before = client.get("/api/state").json()
+    r_l2 = client.post("/api/telegram/level2-warning")
+    assert r_l2.status_code == 200
+    l2_msg = r_l2.json()["telegram_event"]["message"]
+    ev = st_before["evaluation"]
+    assert f"Z={ev['z_mattr']:+.2f}" in l2_msg or f"Z={ev['z_mattr']:.2f}" in l2_msg
+
+    # 4. Inbound Telegram message uses app caregiver first name ("Recado de Laura:") ignoring Telegram account name
+    link_uuid = st_before["telegram_status"]["link_uuid"]
+    client.post(
+        "/api/telegram/webhook",
+        json={"message": {"chat": {"id": 60001}, "from": {"first_name": "UsuarioRandom99"}, "text": f"/start {link_uuid}"}},
+    )
+    res_inb = tg.process_incoming_update(
+        {"message": {"chat": {"id": 60001}, "from": {"first_name": "UsuarioRandom99"}, "text": "Paso a verte a las 5."}},
+        storage=storage,
+        tts_enabled=False,
+    )
+    assert res_inb["action"] == "inbound_text"
+    assert res_inb["inbound_message"]["text_content"].startswith("Recado de Laura:")
+    assert "UsuarioRandom99" not in res_inb["inbound_message"]["text_content"]
+
+    # 5. Reset Demo clears consent_events cleanly
+    r_reset = client.post("/api/demo/reset")
+    assert r_reset.status_code == 200
+    assert r_reset.json()["state"]["consent_events"] == []

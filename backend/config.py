@@ -167,9 +167,9 @@ CONFOUNDING_FACTORS: List[Dict[str, str]] = [
 # Notre Dame Global RISE AI Hackathon — Official "Identify Your Tools" Catalog
 AI_TOOLS_DISCLOSURE: List[Dict[str, str]] = [
     {
-        "tool": "Google Gemini (gemini-3.5-flash-lite -> gemini-3.8-flash -> gemini-3.7-flash -> respaldo local)",
+        "tool": "Google Gemini (gemini-3.5-flash-lite → gemini-3.8-flash → gemini-3.7-flash → respaldo local)",
         "category": "Generación Conversacional & STT Multimodal Fallback",
-        "role": "Cadena automática de respaldo con circuit-breaker anti-404 y thinking desactivado (thinking_budget=0) para latencia <1.5s y mínimo gasto de tokens: conduce Terapia de Reminiscencia (<=35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
+        "role": "Cadena automática de respaldo con circuit-breaker anti-404 y thinking desactivado (thinking_budget=0) para respuestas ágiles y mínimo gasto de tokens: conduce Terapia de Reminiscencia (≤35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
         "privacy_and_limits": "Sin diagnóstico médico ni consejos farmacológicos. Audio enviado solo en RAM si hace falta STT, 0 bytes almacenados; respaldo local determinista si no hay red.",
     },
     {
@@ -181,13 +181,13 @@ AI_TOOLS_DISCLOSURE: List[Dict[str, str]] = [
     {
         "tool": "Motor Matemático Local (Python / NumPy / SciPy)",
         "category": "Análisis Acústico RMS y Z-Score Personal",
-        "role": "Normaliza audio en RAM con ffmpeg (pipe:0 -> pipe:1), detecta pausas anómicas >=2.0s y compara 21 días contra la propia línea base (D1-D14).",
-        "privacy_and_limits": "100% local en CPU, determinista, auditable y libre de sesgos educativos o socioeconómicos.",
+        "role": "Normaliza audio en RAM con ffmpeg (pipe:0 → pipe:1), detecta pausas anómicas ≥2.0 s y compara 21 días contra la propia línea base (D1–D14).",
+        "privacy_and_limits": "100% local en CPU, determinista y auditable. Diseñado para reducir sesgos educativos y socioeconómicos: compara a cada persona contra sí misma.",
     },
     {
         "tool": "Scikit-Learn (TF-IDF Cosine) & MATTR (Ventana 20)",
         "category": "Biomarcadores Léxico-Semánticos Locales",
-        "role": "Mide riqueza léxica invariante a la longitud (MATTR) y bucles semánticos intra-sesión (similitud coseno >=0.72).",
+        "role": "Mide riqueza léxica invariante a la longitud (MATTR) y bucles semánticos intra-sesión (similitud coseno ≥0.72).",
         "privacy_and_limits": "Cómputo ligero O(N) sin entrenamiento de modelos pesados; huella ambiental mínima.",
     },
 ]

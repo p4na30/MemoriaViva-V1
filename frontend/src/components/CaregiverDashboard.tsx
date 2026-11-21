@@ -61,6 +61,14 @@ const THEME_BADGE_LABELS: Record<string, string> = {
   mascotas: "Mascotas",
 };
 
+const EMOTION_LABELS: Record<string, string> = {
+  tranquilo: "Tranquilo",
+  alegre: "Alegre",
+  nostalgico: "Nostálgico",
+  frustrado: "Frustrado",
+  crisis_desorientacion: "Crisis · desorientación",
+};
+
 function formatSigned(value: number, decimals = 1): string {
   const num = Number.isFinite(value) ? value : 0;
   if (Math.abs(num) < 0.5 * Math.pow(10, -decimals)) {
@@ -1387,7 +1395,9 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   </div>
                   <div className="p-3.5 rounded-xl grid grid-cols-2 gap-2 tabular-nums" style={{ backgroundColor: "var(--surface-subtle)" }}>
                     <div>
-                      <span style={{ color: "var(--text-muted)" }}>MATTR:</span>
+                      <span style={{ color: "var(--text-muted)" }}>
+                        Variedad léxica del turno (no comparable con la línea base):
+                      </span>
                       <div className="text-base font-bold">{lastTurnResult.biomarkers?.mattr.mattr.toFixed(3)}</div>
                     </div>
                     <div>
@@ -1437,7 +1447,9 @@ export const CaregiverDashboard: React.FC<Props> = ({
                           <td className="py-2 pr-3 font-medium">{t.mattr.toFixed(3)}</td>
                           <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)}s</td>
                           <td className="py-2 pr-3">{t.anomic_count}</td>
-                          <td className="py-2 pr-3 capitalize">{t.emotional_state.replace("_", " ")}</td>
+                          <td className="py-2 pr-3">
+                            {EMOTION_LABELS[t.emotional_state] || t.emotional_state.replace("_", " ")}
+                          </td>
                           <td className="py-2 pr-3">{THEME_BADGE_LABELS[t.memory_album_theme] || t.memory_album_theme}</td>
                           <td className="py-2 font-semibold">
                             <span

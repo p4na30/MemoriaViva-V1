@@ -51,6 +51,7 @@ from backend.llm_companion import (
     generate_consent_greeting,
     generate_photo_starter,
     get_gemini_diagnostics,
+    warmup_gemini_client,
 )
 from backend.pdf_report import generate_clinical_pdf_bytes
 from backend.storage_manager import StorageManager, generate_link_code, hash_pin, verify_pin
@@ -147,6 +148,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        warmup_gemini_client()
         telegram.start_background_polling(storage)
         try:
             yield
@@ -538,42 +540,43 @@ def create_app(
             llm_res.get("new_biographical_facts") or [], profile_id=pid
         )
 
-        # 4. Persist Turn + Update Day 21 in SQLite
+        # 4. Persist Turn + Update Latest Day in SQLite (single batched GCS FUSE sync)
         alert_level = 3 if llm_res.get("emergency_triggered") else 1
-        turn_record = db.insert_turn(
-            {
-                "profile_id": pid,
-                "circadian_period": circadian,
-                "user_text": transcript,
-                "assistant_reply": llm_res["assistant_reply"],
-                "mattr": mattr_res["mattr"],
-                "mean_pause_sec": pause_res["mean_pause_sec"],
-                "max_pause_sec": pause_res["max_pause_sec"],
-                "anomic_count": pause_res["anomic_count"],
-                "is_repetition": rep_res["is_repetition"],
-                "repetition_score": rep_res["max_similarity"],
-                "emotional_state": llm_res.get("emotional_state", "tranquilo"),
-                "emergency_triggered": llm_res.get("emergency_triggered", False),
-                "memory_album_theme": llm_res.get("memory_album_theme", "familia_hogar"),
-                "learned_facts": learned_facts,
-                "alert_level": alert_level,
-                "source": source,
-            }
-        )
+        with db.deferred_cloud_sync():
+            turn_record = db.insert_turn(
+                {
+                    "profile_id": pid,
+                    "circadian_period": circadian,
+                    "user_text": transcript,
+                    "assistant_reply": llm_res["assistant_reply"],
+                    "mattr": mattr_res["mattr"],
+                    "mean_pause_sec": pause_res["mean_pause_sec"],
+                    "max_pause_sec": pause_res["max_pause_sec"],
+                    "anomic_count": pause_res["anomic_count"],
+                    "is_repetition": rep_res["is_repetition"],
+                    "repetition_score": rep_res["max_similarity"],
+                    "emotional_state": llm_res.get("emotional_state", "tranquilo"),
+                    "emergency_triggered": llm_res.get("emergency_triggered", False),
+                    "memory_album_theme": llm_res.get("memory_album_theme", "familia_hogar"),
+                    "learned_facts": learned_facts,
+                    "alert_level": alert_level,
+                    "source": source,
+                }
+            )
 
-        db.update_latest_day_with_turn(
-            profile_id=pid,
-            mattr=mattr_res["mattr"],
-            mean_pause=pause_res["mean_pause_sec"] or pause_res["max_pause_sec"],
-            anomic_count=pause_res["anomic_count"],
-            is_repetition=rep_res["is_repetition"],
-            mood=llm_res.get("emotional_state", "tranquilo"),
-            circadian_period=circadian,
-            auto_seed=(get_app_mode() == "demo"),
-        )
+            db.update_latest_day_with_turn(
+                profile_id=pid,
+                mattr=mattr_res["mattr"],
+                mean_pause=pause_res["mean_pause_sec"] or pause_res["max_pause_sec"],
+                anomic_count=pause_res["anomic_count"],
+                is_repetition=rep_res["is_repetition"],
+                mood=llm_res.get("emotional_state", "tranquilo"),
+                circadian_period=circadian,
+                auto_seed=(get_app_mode() == "demo"),
+            )
 
         # 5 & 6. Run Telegram delivery + Edge-TTS in parallel inside the request
-        # Guarantees 0ms extra latency while preventing Cloud Run CPU throttling from freezing S.O.S. alerts
+        # Level 3 S.O.S. stays synchronous; Level 1 Pulse dispatches non-blocking to minimize turn latency
         chat_id = cfg.get("telegram_chat_id", "")
 
         def _dispatch_telegram() -> Dict[str, Any]:
@@ -593,7 +596,7 @@ def create_app(
                 topic_summary=llm_res.get("conversation_topic_summary", "Conversación cálida de reminiscencia."),
                 dinner_tip=llm_res.get("dinner_conversation_tip", "Pregúntale en la cena cómo estuvo su tarde."),
                 chat_id=chat_id,
-                sync=True,
+                sync=False,
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:

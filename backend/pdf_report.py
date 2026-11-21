@@ -285,6 +285,13 @@ def generate_clinical_pdf_bytes(
             pdf.set_fill_color(248, 250, 252) if idx % 2 == 0 else pdf.set_fill_color(255, 255, 255)
         pdf.set_x(pdf.l_margin)
         pdf.set_text_color(30, 41, 59)
+        circ_raw = str(d.get("circadian_period", "matutino"))
+        circ_map = {
+            "matutino": "Matutino",
+            "vespertino_sundowning": "Vesp. (Sundowning)",
+            "nocturno": "Nocturno",
+        }
+        circ_lbl = circ_map.get(circ_raw, circ_raw.replace("_", " ").capitalize()[:18])
         row_vals = [
             f"D{day_num}",
             window_lbl,
@@ -293,7 +300,7 @@ def generate_clinical_pdf_bytes(
             str(d.get("anomic_pauses", 0)),
             str(d.get("repetitions", 0)),
             str(d.get("mood", ""))[:20],
-            str(d.get("circadian_period", "matutino")).replace("_", " ")[:20],
+            circ_lbl,
         ]
         for val, w in zip(row_vals, widths):
             pdf.cell(w, 5.2, pdf.safe(val), border=1, fill=True, align="C")

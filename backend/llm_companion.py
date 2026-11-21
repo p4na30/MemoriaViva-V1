@@ -16,6 +16,7 @@ from backend.config import (
     MEMORY_ALBUM_THEMES,
     get_gemini_api_key,
     get_gemini_model_chain,
+    get_local_now,
     mark_model_unavailable,
 )
 
@@ -25,6 +26,42 @@ _LAST_GEMINI_DIAGNOSTICS: Dict[str, Optional[str]] = {
     "last_model": None,
     "last_error": None,
 }
+_GEMINI_CLIENT_CACHE: Dict[str, Any] = {}
+
+
+def _get_gemini_client(api_key: str) -> Any:
+    """Reuse initialized genai.Client per API key to avoid per-turn TLS/client cold start."""
+    from google import genai
+
+    client = _GEMINI_CLIENT_CACHE.get(api_key)
+    if client is None:
+        client = genai.Client(api_key=api_key)
+        _GEMINI_CLIENT_CACHE.clear()
+        _GEMINI_CLIENT_CACHE[api_key] = client
+    return client
+
+
+def warmup_gemini_client() -> None:
+    """Pre-initialize Gemini SDK client at server startup to cut first-turn latency."""
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return
+    try:
+        _get_gemini_client(api_key)
+    except Exception:
+        pass
+
+
+def _local_daypart_label() -> str:
+    now = get_local_now()
+    hour = now.hour
+    if 5 <= hour < 12:
+        part = "mañana"
+    elif 12 <= hour < 19:
+        part = "tarde"
+    else:
+        part = "noche"
+    return f"{now.strftime('%H:%M')} ({part})"
 
 
 def _sanitize_gemini_error(exc: Exception, api_key: str = "") -> str:
@@ -198,7 +235,10 @@ def build_master_prompt(
         else "Sin repetición semántica en este turno."
     )
 
+    daypart_now = _local_daypart_label()
+
     return f"""ERES "MEMORIAVIVA", UN COMPAÑERO CONVERSACIONAL CÁLIDO, EMPÁTICO Y REAL PARA {nombre_preferido} ({edad} AÑOS).
+HORA LOCAL ACTUAL: {daypart_now}. Usa referencias temporales coherentes con esta hora exacta (nunca digas "esta tarde" si es de mañana o viceversa).
 
 CONTEXTO BIOGRÁFICO ACTUAL DE {nombre_preferido} (ÚSALO SOLO COMO APOYO O SI ÉL LO MENCIONA/OLVIDA):
 {json.dumps(profile, ensure_ascii=False, indent=2)}
@@ -218,7 +258,8 @@ REGLAS INQUEBRANTABLES DEL MARCO RISE PARA `assistant_reply`:
 4. PACIENCIA INFINITA ANTE REPETICIONES: Si {nombre_preferido} cuenta la misma historia otra vez, escúchalo con ilusión como si fuera la primera vez y pídele un detalle sensorial nuevo. PROHIBIDO decir "otra vez", "de nuevo" o insinuar que lo repitió.
 5. PROTOCOLO DE VALIDACIÓN DE FEIL (CRISIS O DESORIENTACIÓN) Y SEGURIDAD MÉDICA: Si expresa miedo, llanto, angustia, dolor físico, mareo o dice que no sabe dónde está:
    - SUSPENDE cualquier pregunta de memoria (0 signos de interrogación).
-   - Valida su emoción con ternura, recuérdale que está seguro en su casa en {ciudad} y que su familiar {cuidador} ya fue avisado para llamarle.
+   - Si el familiar que menciona está finado en el perfil, NO confirmes ni niegues su fallecimiento ni digas frases como "vive en su corazón"; valida la emoción con ternura (ej. "Lo entiendo, quiere ver a Doña Carmen").
+   - Recuérdale que respire profundo, que está seguro en su casa en {ciudad} y que su familiar {cuidador} ya fue avisado para llamarle.
    - PROHIBIDO emitir diagnósticos médicos o recomendar/ajustar medicamentos; ante preguntas de pastillas o dosis, deriva con cariño a {cuidador} o a su médico.
 6. RETROALIMENTACIÓN Y MEMORIA VIVA (`new_biographical_facts`): Extrae cualquier dato nuevo que {nombre_preferido} mencione en este turno como frases claras para guardarlas permanentemente en su perfil JSON.
 
@@ -258,10 +299,18 @@ def _deterministic_fallback_reply(
 
     # 1. Crisis / Acute disorientation (Naomi Feil Validation — ZERO cognitive questions)
     if demo_scenario_id == "demo_3_crisis" or any(k in low for k in CRISIS_KEYWORDS):
-        reply = enforce_word_limit(
-            f"Tranquilo, {nombre}, entiendo que se sienta asustado y mareado. "
-            f"Respire despacito, está seguro en su casa en {ciudad} y {cuidador} ya fue avisada para llamarle ahorita."
-        )
+        cuidador_pila = cuidador.split()[0] if cuidador.strip() else "su familiar"
+        ciudad_corta = ciudad.split(",")[0].strip() if ciudad else "su casa"
+        if demo_scenario_id == "demo_3_crisis" or "carmen" in low:
+            reply = enforce_word_limit(
+                f"{nombre}, respire profundo, está seguro en su casa en {ciudad_corta}. "
+                f"Lo entiendo, quiere ver a Doña Carmen. Ya le avisé a su hija {cuidador_pila} para que le llame."
+            )
+        else:
+            reply = enforce_word_limit(
+                f"{nombre}, respire profundo, está seguro en su casa en {ciudad_corta}. "
+                f"Lo entiendo y aquí estoy con usted. Ya le avisé a {cuidador_pila} para que le llame."
+            )
         return {
             "assistant_reply": reply,
             "emotional_state": "crisis_desorientacion",
@@ -399,10 +448,9 @@ def _call_gemini_with_fallback(
     if not api_key:
         return "", ""
 
-    from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    client = _get_gemini_client(api_key)
     for model_name in get_gemini_model_chain():
         config_kwargs: Dict[str, Any] = {
             "temperature": temperature,

@@ -1,0 +1,88 @@
+name: Build MemoriaViva RISE Android APK
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "HTTPS Cloud Run URL for VITE_API_URL (overrides vars.APP_SERVER_URL)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install frontend dependencies & build React bundle
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ github.event.inputs.server_url || vars.APP_SERVER_URL || '' }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Generate and configure Capacitor 6 Android project
+        working-directory: frontend
+        run: |
+          npx cap add android
+          node scripts/configure-android.mjs
+          npx cap sync android
+
+      - name: Build Debug APK
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memoriaviva-rise-debug-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+      - name: Decode Keystore and Build Signed Release APK (on version tags)
+        if: startsWith(github.ref, 'refs/tags/v') && secrets.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: frontend/android
+        env:
+          KEYSTORE_FILE: /tmp/memoriaviva-release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "${KEYSTORE_FILE}"
+          ./gradlew assembleRelease
+
+      - name: Publish GitHub Release (on version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            frontend/android/app/build/outputs/apk/debug/app-debug.apk
+            frontend/android/app/build/outputs/apk/release/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

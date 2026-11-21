@@ -1,0 +1,62 @@
+[
+  {
+    "filename": "01_ferrocarril_estacion.jpg",
+    "theme": "ferrocarril",
+    "title": "Estación de Trenes de Guadalajara",
+    "caption": "Locomotora clásica de Ferrocarriles Nacionales en los años 70, donde Don Manuel trabajó 32 años como maquinista y mecánico."
+  },
+  {
+    "filename": "02_ferrocarril_taller_reloj.jpg",
+    "theme": "ferrocarril",
+    "title": "El Reloj de Jubilación Ferroviaria",
+    "caption": "Taller mecánico tradicional con herramientas y el reloj de bolsillo que sus compañeros le regalaron al jubilarse de los trenes."
+  },
+  {
+    "filename": "03_boleros_guitarra_vinilos.jpg",
+    "theme": "musica_boleros",
+    "title": "Tarde de Boleros y Vinilos",
+    "caption": "Guitarra clásica y tocadiscos con boleros del Trío Los Panchos y Agustín Lara, especialmente Solamente una vez."
+  },
+  {
+    "filename": "04_boleros_plaza_tlaquepaque.jpg",
+    "theme": "musica_boleros",
+    "title": "Serenata en la Plaza de Tlaquepaque",
+    "caption": "Kiosco tradicional iluminado al atardecer en San Pedro Tlaquepaque, donde conoció a Doña Carmen en 1975."
+  },
+  {
+    "filename": "05_playa_miramar_1988.jpg",
+    "theme": "playa_manzanillo",
+    "title": "Viaje Familiar a Playa Miramar (1988)",
+    "caption": "Atardecer cálido en Playa Miramar, Manzanillo, cuando llevó a toda la familia a conocer el mar por primera vez."
+  },
+  {
+    "filename": "06_playa_cabanas_san_pedrito.jpg",
+    "theme": "playa_manzanillo",
+    "title": "Cabañas San Pedrito en Manzanillo",
+    "caption": "Palmeras y cabañas frente al mar en Colima, cerca de donde hoy vive su hija menor Rocío."
+  },
+  {
+    "filename": "07_familia_vocho_1974.jpg",
+    "theme": "familia_hogar",
+    "title": "El Vocho Azul Modelo 1974",
+    "caption": "Su primer automóvil, un Volkswagen Sedán azul estacionado frente a casa en Tlaquepaque que él mismo afinaba."
+  },
+  {
+    "filename": "08_familia_domino_cafe.jpg",
+    "theme": "familia_hogar",
+    "title": "Martes de Dominó y Dibujos de Trenes",
+    "caption": "Mesa familiar de madera con fichas de dominó para jugar con su nieto Mateo, café de olla y dibujos de trenes para Sofía."
+  },
+  {
+    "filename": "09_mascotas_sultan_patio.jpg",
+    "theme": "mascotas",
+    "title": "Sultán en el Patio Soleado",
+    "caption": "Un noble perro pastor alemán descansando junto a macetas de barro en el patio tradicional de la casa familiar."
+  },
+  {
+    "filename": "10_mascotas_paseo_parque.jpg",
+    "theme": "mascotas",
+    "title": "Paseo Vespertino en el Parque",
+    "caption": "Un fiel pastor alemán caminando bajo árboles frondosos con la luz dorada de la tarde en Jalisco."
+  }
+]

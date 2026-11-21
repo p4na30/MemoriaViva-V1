@@ -582,7 +582,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
   });
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-white select-none">
+    <div className="relative w-full h-dvh-screen overflow-hidden bg-slate-950 text-white select-none">
       {/* Fullscreen Family Photo Frame (True Dual-Layer Crossfade) */}
       {currentPhoto ? (
         <>
@@ -617,20 +617,20 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       <div className="absolute inset-0 bg-gradient-to-b from-slate-950/65 via-transparent to-slate-950/85 pointer-events-none" />
 
       {/* Discreet Top Bar */}
-      <header className="relative z-20 flex items-start justify-between px-6 pt-5 pb-3">
-        <div>
-          <div className="text-4xl sm:text-5xl font-semibold tracking-tight tabular-nums leading-none drop-shadow">
+      <header className="relative z-20 flex items-start justify-between gap-2 px-4 sm:px-6 pt-4 sm:pt-5 pb-2 sm:pb-3 safe-top">
+        <div className="min-w-0">
+          <div className="text-3xl sm:text-5xl font-semibold tracking-tight tabular-nums leading-none drop-shadow">
             {timeFormatted}
           </div>
-          <p className="text-sm sm:text-base text-slate-200 mt-1 drop-shadow">
+          <p className="text-xs sm:text-base text-slate-200 mt-1 drop-shadow truncate">
             {dayFormatted} · Compañero de {elderName}
           </p>
           {currentPhoto && (
-            <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/55 backdrop-blur-md border border-white/15 text-xs text-slate-100">
-              <ImageIcon className="w-3.5 h-3.5 text-cyan-300" />
-              <span>{currentPhoto.title}</span>
+            <div className="mt-2 inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-slate-950/55 backdrop-blur-md border border-white/15 text-[11px] sm:text-xs text-slate-100 max-w-[72vw] sm:max-w-none">
+              <ImageIcon className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+              <span className="truncate">{currentPhoto.title}</span>
               {anchoredBadge && (
-                <span className="px-2 py-0.5 rounded-full bg-cyan-500/25 text-cyan-200 font-medium">
+                <span className="hidden sm:inline px-2 py-0.5 rounded-full bg-cyan-500/25 text-cyan-200 font-medium shrink-0">
                   {anchoredBadge}
                 </span>
               )}
@@ -638,11 +638,24 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           )}
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           {photos.length > 0 && (
-            <span className="px-3 py-1.5 rounded-full bg-slate-950/55 backdrop-blur-md border border-white/15 text-xs font-medium tabular-nums">
+            <span className="hidden sm:inline-flex px-3 py-1.5 rounded-full bg-slate-950/55 backdrop-blur-md border border-white/15 text-xs font-medium tabular-nums">
               {(photoIdx % photos.length) + 1} / {photos.length}
             </span>
+          )}
+
+          {/* Mobile-only discreet Demo toggle in top bar so it never overlaps the bottom dock */}
+          {isDemoKiosk && (
+            <button
+              type="button"
+              onClick={() => setDemoBarOpen((v) => !v)}
+              className="sm:hidden w-10 h-10 rounded-full bg-slate-950/55 hover:bg-slate-900/80 backdrop-blur-md border border-white/20 flex items-center justify-center transition"
+              title="Actos Demo"
+              aria-label="Abrir actos Demo"
+            >
+              <Radio className="w-4 h-4 text-cyan-300" />
+            </button>
           )}
 
           {/* Assisted Dual Consent Warm Greeting Button */}
@@ -714,8 +727,38 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       )}
 
       {/* Minimal Translucent Bottom Dock */}
-      <footer className="absolute bottom-0 inset-x-0 z-20 p-5 sm:p-7 flex flex-col items-center gap-3">
-        <div className="w-full max-w-3xl rounded-2xl bg-slate-950/70 backdrop-blur-md border border-white/15 p-5 shadow-2xl space-y-4">
+      <footer className="absolute bottom-0 inset-x-0 z-20 px-3 sm:px-7 pt-3 pb-4 sm:pb-7 safe-bottom flex flex-col items-center gap-2.5 sm:gap-3">
+        {/* Mobile Demo Drawer above dock when toggled */}
+        {isDemoKiosk && demoBarOpen && (
+          <div className="sm:hidden w-full max-w-3xl flex items-center justify-center gap-1.5 bg-slate-950/90 border border-white/15 rounded-xl p-1.5 backdrop-blur-md">
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={() => handleRunDemoAct("demo_1_rescate")}
+              className="flex-1 px-2 py-2 rounded-lg text-xs font-medium bg-emerald-500/20 text-emerald-200"
+            >
+              1 · Rescate
+            </button>
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={() => handleRunDemoAct("demo_2_anomia")}
+              className="flex-1 px-2 py-2 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-200"
+            >
+              2 · Anomia
+            </button>
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={() => handleRunDemoAct("demo_3_crisis")}
+              className="flex-1 px-2 py-2 rounded-lg text-xs font-medium bg-red-500/25 text-red-200"
+            >
+              3 · S.O.S.
+            </button>
+          </div>
+        )}
+
+        <div className="w-full max-w-3xl rounded-2xl bg-slate-950/75 backdrop-blur-md border border-white/15 p-4 sm:p-5 shadow-2xl space-y-3 sm:space-y-4">
           {/* Emergency Contention Banner */}
           {emergencyActive && (
             <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-red-500/20 border border-red-400/40 text-red-100 text-xs sm:text-sm font-medium">
@@ -743,8 +786,8 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           )}
 
           {/* Companion Reply */}
-          <div className="flex items-start justify-between gap-4">
-            <p className="text-lg sm:text-2xl font-medium leading-snug text-white">
+          <div className="flex items-start justify-between gap-3 sm:gap-4">
+            <p className="text-base sm:text-2xl font-medium leading-snug text-white">
               {replyText}
             </p>
             {lastAudioUri && (
@@ -769,15 +812,15 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           )}
 
           {/* Voice Dual Mode Controls + Foto -> Voz Action */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2.5 sm:gap-3 pt-1">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap">
               {/* Primary Inclusive Talk Button */}
               {voiceMode === "auto_vad" ? (
                 <button
                   type="button"
                   disabled={isProcessing}
                   onClick={isListening ? stopListeningAndSubmit : startListening}
-                  className="px-6 py-3.5 rounded-xl font-semibold text-base flex items-center gap-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition shadow-lg"
+                  className="w-full sm:w-auto justify-center px-5 sm:px-6 py-3.5 rounded-xl font-semibold text-base flex items-center gap-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition shadow-lg touch-manipulation"
                 >
                   {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                   {isListening ? "Detener escucha" : "Tocar para platicar"}
@@ -789,10 +832,10 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
                   onPointerDown={startListening}
                   onPointerUp={stopListeningAndSubmit}
                   onPointerCancel={stopListeningAndSubmit}
-                  className="px-6 py-3.5 rounded-xl font-semibold text-base flex items-center gap-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition shadow-lg touch-none"
+                  className="w-full sm:w-auto justify-center px-5 sm:px-6 py-3.5 rounded-xl font-semibold text-base flex items-center gap-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition shadow-lg touch-none"
                 >
                   <Hand className="w-5 h-5" />
-                  Mantén presionado (o ESPACIO)
+                  Mantén presionado
                 </button>
               )}
 
@@ -802,7 +845,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
                   type="button"
                   disabled={isProcessing || isListening}
                   onClick={handleTalkAboutPhoto}
-                  className="px-4 py-3.5 rounded-xl font-medium text-sm flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 text-white transition"
+                  className="w-full sm:w-auto justify-center px-4 py-3 sm:py-3.5 rounded-xl font-medium text-sm flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 text-white transition touch-manipulation"
                 >
                   <MessageCircleHeart className="w-4 h-4 text-cyan-300" />
                   Platicar sobre esta foto
@@ -811,7 +854,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
             </div>
 
             {/* Dual Voice Mode Switcher */}
-            <div className="inline-flex rounded-xl bg-white/10 p-1 text-xs">
+            <div className="grid grid-cols-2 sm:inline-flex rounded-xl bg-white/10 p-1 text-xs">
               <button
                 type="button"
                 onClick={() => setVoiceMode("auto_vad")}
@@ -835,9 +878,9 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         </div>
       </footer>
 
-      {/* Discreet Fail-Safe Pitch Controls (only visible in Demo Mode) */}
+      {/* Discreet Fail-Safe Pitch Controls (Desktop bottom-left; mobile uses top bar) */}
       {isDemoKiosk && (
-        <div className="fixed bottom-4 left-4 z-30 flex items-center gap-1.5">
+        <div className="hidden sm:flex fixed bottom-4 left-4 z-30 items-center gap-1.5">
           <button
             type="button"
             onClick={() => setDemoBarOpen((v) => !v)}

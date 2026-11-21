@@ -187,3 +187,35 @@ body,
 .photo-transition {
   animation: photoCrossfade 700ms ease-out forwards;
 }
+
+/* Mobile-First Native Utilities (Dynamic Viewport + Safe Area Insets + Touch Targets) */
+.h-dvh-screen {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.safe-top {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (max-width: 639px) {
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger,
+  .clinical-input {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+}

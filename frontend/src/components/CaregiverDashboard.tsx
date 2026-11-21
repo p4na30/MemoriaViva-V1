@@ -412,13 +412,13 @@ export const CaregiverDashboard: React.FC<Props> = ({
     }
   };
 
-  const navItems: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
-    { id: "resumen", label: "Resumen Clínico", icon: <Activity className="w-4 h-4" /> },
-    { id: "album", label: "Álbum Familiar", icon: <ImageIcon className="w-4 h-4" /> },
-    { id: "gobernanza", label: "Gobernanza RISE & IA", icon: <ShieldCheck className="w-4 h-4" /> },
-    { id: "configuracion", label: "Configuración", icon: <Settings className="w-4 h-4" /> },
+  const navItems: Array<{ id: DashboardTab; label: string; shortLabel: string; icon: React.ReactNode }> = [
+    { id: "resumen", label: "Resumen Clínico", shortLabel: "Resumen", icon: <Activity className="w-4 h-4" /> },
+    { id: "album", label: "Álbum Familiar", shortLabel: "Álbum", icon: <ImageIcon className="w-4 h-4" /> },
+    { id: "gobernanza", label: "Gobernanza RISE & IA", shortLabel: "RISE", icon: <ShieldCheck className="w-4 h-4" /> },
+    { id: "configuracion", label: "Configuración", shortLabel: "Config", icon: <Settings className="w-4 h-4" /> },
     ...(isDemoApp
-      ? [{ id: "simulador" as DashboardTab, label: "Simulador Demo", icon: <Play className="w-4 h-4" /> }]
+      ? [{ id: "simulador" as DashboardTab, label: "Simulador Demo", shortLabel: "Demo", icon: <Play className="w-4 h-4" /> }]
       : []),
   ];
 
@@ -430,32 +430,32 @@ export const CaregiverDashboard: React.FC<Props> = ({
     <div className="min-h-screen flex flex-col">
       {/* Unified Header */}
       <header
-        className="sticky top-0 z-30 border-b backdrop-blur-md"
+        className="sticky top-0 z-30 border-b backdrop-blur-md safe-top"
         style={{
           backgroundColor: "color-mix(in srgb, var(--surface) 92%, transparent)",
           borderColor: "var(--border)",
         }}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
               style={{ backgroundColor: "var(--primary-soft)", color: "var(--primary)" }}
             >
               <HeartHandshake className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold tracking-tight">MemoriaViva RISE</h1>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <h1 className="text-sm sm:text-base font-bold tracking-tight truncate">MemoriaViva RISE</h1>
                 <span
-                  className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                  className="text-[11px] font-semibold px-2 py-0.5 rounded-full truncate"
                   style={{ backgroundColor: "var(--primary-soft)", color: "var(--primary)" }}
                 >
                   {paciente.nombre_preferido} ({paciente.edad} años)
                 </span>
               </div>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Panel Familiar y Clínico · Cuidador: {state.account.caregiver_name}
+              <p className="text-[11px] sm:text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                Panel Familiar · {state.account.caregiver_name}
               </p>
             </div>
           </div>
@@ -465,15 +465,16 @@ export const CaregiverDashboard: React.FC<Props> = ({
               {theme === "light" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
               <span className="hidden sm:inline">{theme === "light" ? "Modo Noche" : "Modo Día"}</span>
             </button>
-            <button type="button" onClick={onLockKiosk} className="btn-primary">
+            <button type="button" onClick={onLockKiosk} className="btn-primary !px-3 sm:!px-4 text-xs sm:text-sm">
               <Lock className="w-4 h-4" />
-              Activar Modo Kiosco
+              <span className="hidden sm:inline">Activar Modo Kiosco</span>
+              <span className="sm:hidden">Kiosco</span>
             </button>
           </div>
         </div>
 
-        {/* 5 Clean Navigation Tabs */}
-        <nav className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-1 overflow-x-auto">
+        {/* Desktop Navigation Tabs (Mobile uses native bottom tab bar) */}
+        <nav className="hidden md:flex max-w-7xl mx-auto px-4 sm:px-6 items-center gap-1 overflow-x-auto no-scrollbar">
           {navItems.map((tab) => {
             const active = activeTab === tab.id;
             return (
@@ -496,7 +497,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 md:pb-8 space-y-5 sm:space-y-6">
         {/* ================= TAB 1: RESUMEN CLÍNICO ================= */}
         {activeTab === "resumen" && (
           <div className="space-y-6">
@@ -611,7 +612,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <div className="h-80 w-full">
+                <div className="h-64 sm:h-80 w-full">
                   {state.history_21_days.length === 0 ? (
                     <div
                       className="h-full rounded-xl border border-dashed flex flex-col items-center justify-center text-center px-6 gap-2"
@@ -1427,54 +1428,127 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   Ejecuta alguno de los 3 actos o conversa en el Modo Kiosco para ver los registros en vivo.
                 </p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left border-collapse">
-                    <thead>
-                      <tr className="border-b" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>
-                        <th className="py-2 pr-3">Hora</th>
-                        <th className="py-2 pr-3">MATTR</th>
-                        <th className="py-2 pr-3">Pausa Máx</th>
-                        <th className="py-2 pr-3">Anómicas</th>
-                        <th className="py-2 pr-3">Emoción</th>
-                        <th className="py-2 pr-3">Tema Visual</th>
-                        <th className="py-2">Nivel</th>
-                      </tr>
-                    </thead>
-                    <tbody className="tabular-nums">
-                      {state.recent_turns.map((t) => (
-                        <tr key={t.id} className="border-b" style={{ borderColor: "var(--border)" }}>
-                          <td className="py-2 pr-3">{formatLocalTime(t.created_at)}</td>
-                          <td className="py-2 pr-3 font-medium">{t.mattr.toFixed(3)}</td>
-                          <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)}s</td>
-                          <td className="py-2 pr-3">{t.anomic_count}</td>
-                          <td className="py-2 pr-3">
-                            {EMOTION_LABELS[t.emotional_state] || t.emotional_state.replace("_", " ")}
-                          </td>
-                          <td className="py-2 pr-3">{THEME_BADGE_LABELS[t.memory_album_theme] || t.memory_album_theme}</td>
-                          <td className="py-2 font-semibold">
-                            <span
-                              style={{
-                                color:
-                                  t.alert_level === 3
-                                    ? "var(--danger)"
-                                    : t.alert_level === 2
-                                      ? "var(--amber)"
-                                      : "var(--emerald)",
-                              }}
-                            >
-                              N{t.alert_level}
-                            </span>
-                          </td>
+                <>
+                  {/* Mobile Stacked Turn Cards */}
+                  <div className="sm:hidden space-y-2.5">
+                    {state.recent_turns.map((t) => (
+                      <article
+                        key={t.id}
+                        className="p-3 rounded-xl border text-xs space-y-1.5"
+                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}
+                      >
+                        <div className="flex items-center justify-between font-semibold">
+                          <span>{EMOTION_LABELS[t.emotional_state] || t.emotional_state.replace("_", " ")}</span>
+                          <span
+                            className="tabular-nums"
+                            style={{
+                              color:
+                                t.alert_level === 3
+                                  ? "var(--danger)"
+                                  : t.alert_level === 2
+                                    ? "var(--amber)"
+                                    : "var(--emerald)",
+                            }}
+                          >
+                            N{t.alert_level} · {formatLocalTime(t.created_at)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                          <span>Var. {t.mattr.toFixed(2)}</span>
+                          <span>Pausa {t.max_pause_sec.toFixed(1)}s</span>
+                          <span>Anóm. {t.anomic_count}</span>
+                        </div>
+                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          Tema: {THEME_BADGE_LABELS[t.memory_album_theme] || t.memory_album_theme}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  {/* Desktop Full Table */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="border-b" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>
+                          <th className="py-2 pr-3">Hora</th>
+                          <th className="py-2 pr-3">MATTR</th>
+                          <th className="py-2 pr-3">Pausa Máx</th>
+                          <th className="py-2 pr-3">Anómicas</th>
+                          <th className="py-2 pr-3">Emoción</th>
+                          <th className="py-2 pr-3">Tema Visual</th>
+                          <th className="py-2">Nivel</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="tabular-nums">
+                        {state.recent_turns.map((t) => (
+                          <tr key={t.id} className="border-b" style={{ borderColor: "var(--border)" }}>
+                            <td className="py-2 pr-3">{formatLocalTime(t.created_at)}</td>
+                            <td className="py-2 pr-3 font-medium">{t.mattr.toFixed(3)}</td>
+                            <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)}s</td>
+                            <td className="py-2 pr-3">{t.anomic_count}</td>
+                            <td className="py-2 pr-3">
+                              {EMOTION_LABELS[t.emotional_state] || t.emotional_state.replace("_", " ")}
+                            </td>
+                            <td className="py-2 pr-3">{THEME_BADGE_LABELS[t.memory_album_theme] || t.memory_album_theme}</td>
+                            <td className="py-2 font-semibold">
+                              <span
+                                style={{
+                                  color:
+                                    t.alert_level === 3
+                                      ? "var(--danger)"
+                                      : t.alert_level === 2
+                                        ? "var(--amber)"
+                                        : "var(--emerald)",
+                                }}
+                              >
+                                N{t.alert_level}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </section>
           </div>
         )}
       </main>
+
+      {/* Native-Style Fixed Bottom Navigation Bar on Mobile */}
+      <nav
+        aria-label="Navegación móvil"
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t backdrop-blur-md safe-bottom"
+        style={{
+          backgroundColor: "color-mix(in srgb, var(--surface) 95%, transparent)",
+          borderColor: "var(--border)",
+        }}
+      >
+        <div
+          className="grid gap-1 px-2 pt-1.5"
+          style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
+        >
+          {navItems.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className="flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-xl text-[11px] font-medium transition touch-manipulation"
+                style={{
+                  color: active ? "var(--primary)" : "var(--text-muted)",
+                  backgroundColor: active ? "var(--primary-soft)" : "transparent",
+                }}
+              >
+                {tab.icon}
+                <span className="truncate max-w-full">{tab.shortLabel}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 };

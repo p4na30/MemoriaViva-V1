@@ -19,6 +19,7 @@ data/memoriaviva.db-wal
 data/memoriaviva.db-shm
 data/account_config.json
 data/photos/
+data/profiles/*_runtime.json
 !data/sample_assets/
 !data/profiles/don_manuel_simulacion.json
 !data/history_21_days.json

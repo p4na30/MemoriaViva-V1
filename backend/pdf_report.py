@@ -16,6 +16,14 @@ from backend.config import AI_TOOLS_DISCLOSURE, CONFOUNDING_FACTORS
 FACTOR_LABELS = {f["id"]: f["label"] for f in CONFOUNDING_FACTORS}
 
 
+def _fmt_signed(value: Any, decimals: int = 1) -> str:
+    """Format signed deltas/Z-scores cleanly without '+-' artifacts."""
+    num = float(value or 0.0)
+    if abs(num) < (0.5 * (10 ** (-decimals))):
+        return f"{0.0:.{decimals}f}"
+    return f"{num:+.{decimals}f}"
+
+
 def _find_unicode_fonts() -> tuple[str | None, str | None]:
     regular_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -155,17 +163,21 @@ def generate_clinical_pdf_bytes(
     pdf.ln(2)
 
     # KPI Summary Boxes
+    mattr_delta_str = _fmt_signed(evaluation.get("delta_mattr_pct_display", 0), 1)
+    z_mattr_str = _fmt_signed(evaluation.get("z_mattr", 0), 2)
+    pause_delta_str = _fmt_signed(evaluation.get("delta_pause_pct_display", 0), 1)
+    z_pause_str = _fmt_signed(evaluation.get("z_pause", 0), 2)
     kpis = [
         ("Vitalidad", f"{evaluation.get('vitality_score', 0)}/100", "Índice compuesto"),
         (
             "MATTR Reciente",
             f"{evaluation.get('recent_mattr_mean', 0):.3f}",
-            f"Base: {evaluation.get('baseline_mattr_mean', 0):.3f} ({evaluation.get('delta_mattr_pct_display', 0)}%, Z={evaluation.get('z_mattr', 0)})",
+            f"Base: {evaluation.get('baseline_mattr_mean', 0):.3f} ({mattr_delta_str}%, Z={z_mattr_str})",
         ),
         (
             "Pausas Recientes",
             f"{evaluation.get('recent_pause_mean', 0):.2f} s",
-            f"Base: {evaluation.get('baseline_pause_mean', 0):.2f} s (+{evaluation.get('delta_pause_pct_display', 0)}%, Z={evaluation.get('z_pause', 0)})",
+            f"Base: {evaluation.get('baseline_pause_mean', 0):.2f} s ({pause_delta_str}%, Z={z_pause_str})",
         ),
     ]
     start_y = pdf.get_y()

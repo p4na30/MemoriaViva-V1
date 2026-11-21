@@ -176,3 +176,95 @@ def test_telegram_qr_three_levels_and_pdf_with_hitl(tmp_path: Path, monkeypatch)
     )
     assert pdf_bytes.startswith(b"%PDF-")
     assert len(pdf_bytes) > 2500
+
+
+def test_gemini_fallback_chain_and_thinking_budget_zero(monkeypatch) -> None:
+    """Verify automatic fallback chain gemini-3.8-flash -> gemini-flash-latest -> local + thinking_budget=0."""
+    import sys
+    import types as pytypes
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-fake-key")
+    monkeypatch.delenv("GEMINI_MODEL_COMPANION", raising=False)
+
+    calls = []
+
+    class FakeModels:
+        def generate_content(self, model, contents, config=None):
+            budget = getattr(getattr(config, "thinking_config", None), "thinking_budget", None)
+            calls.append((model, budget))
+            if model == "gemini-3.8-flash":
+                raise RuntimeError("404 model not available yet")
+            payload = json.dumps(
+                {
+                    "assistant_reply": "Qué bonito recuerdo de sus trenes, Don Manuel. ¿Qué ruta disfrutaba más?",
+                    "emotional_state": "alegre",
+                    "emergency_triggered": False,
+                    "emergency_reason": None,
+                    "biographical_rescue_triggered": False,
+                    "rescued_entity": None,
+                    "conversation_topic_summary": "Platicó de los ferrocarriles.",
+                    "dinner_conversation_tip": "Pregúntale cuál era su estación favorita.",
+                    "new_biographical_facts": [],
+                    "memory_album_theme": "ferrocarril",
+                }
+            )
+            return pytypes.SimpleNamespace(text=payload)
+
+    class FakeClient:
+        def __init__(self, api_key=None):
+            self.models = FakeModels()
+
+    fake_genai = pytypes.SimpleNamespace(Client=FakeClient)
+    from google import genai as real_genai
+
+    monkeypatch.setattr(real_genai, "Client", FakeClient)
+
+    storage = StorageManager()
+    profile = storage.load_demo_seed_profile()
+    res = generate_companion_response("Me encantaban los trenes de Guadalajara.", profile, [], {"is_repetition": False})
+
+    assert res["engine_used"] == "gemini-flash-latest"
+    assert calls[0][0] == "gemini-3.8-flash"
+    assert calls[0][1] == 0
+    assert any(m == "gemini-flash-latest" and b == 0 for m, b in calls)
+    assert "sys" or sys  # keep import clean
+
+
+def test_telegram_async_nonblocking_and_signed_formatting(tmp_path: Path, monkeypatch) -> None:
+    """Verify Telegram alerts queue asynchronously and never produce '+-' in Level 2 text."""
+    import time
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
+    db = DatabaseManager(db_path=tmp_path / "test_async.db", cloud_sync=False)
+    tg = TelegramNotifier(db=db)
+
+    def fake_send(chat_id: str, text: str):
+        time.sleep(0.05)
+        return True, "delivered_telegram"
+
+    monkeypatch.setattr(tg, "_send_raw_message", fake_send)
+
+    # Negative pause delta should format as -5.2%, NEVER +-5.2%
+    neg_eval = {
+        "delta_mattr_pct_display": 4.5,
+        "z_mattr": 1.15,
+        "delta_pause_pct_display": -5.2,
+        "z_pause": -0.85,
+    }
+    entry = tg.send_level2_preventive_warning(
+        profile_id="don_manuel",
+        elder_name="Don Manuel",
+        evaluation=neg_eval,
+        chat_id="99999",
+    )
+    assert entry["channel_status"] == "queued_async"
+    assert "+-" not in entry["message"]
+    assert "Pausas -5.2%" in entry["message"]
+    assert "MATTR +4.5%" in entry["message"]
+
+    # Wait briefly for background thread to update SQLite row
+    time.sleep(0.2)
+    logs = db.get_telegram_logs("don_manuel", limit=5)
+    assert logs[0]["delivered"] is True
+    assert logs[0]["channel_status"] == "delivered_telegram"
+

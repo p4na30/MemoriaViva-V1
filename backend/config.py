@@ -67,9 +67,24 @@ TTS_VOICE_FEMALE: str = "es-MX-DaliaNeural"
 TTS_RATE: str = "-15%"
 TTS_PITCH: str = "-5Hz"
 
-# LLM Configuration
-GEMINI_MODEL_COMPANION: str = os.getenv("GEMINI_MODEL_COMPANION", "gemini-2.5-flash")
+# LLM Configuration (fast fallback chain with thinking disabled for < 1.5s latency)
+GEMINI_MODEL_COMPANION: str = os.getenv("GEMINI_MODEL_COMPANION", "gemini-3.8-flash")
+GEMINI_MODEL_FALLBACK_CHAIN: List[str] = [
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
+]
 MAX_ASSISTANT_WORDS: int = 35
+
+
+def get_gemini_model_chain() -> List[str]:
+    """Return ordered deduplicated Gemini fallback chain starting with configured primary model."""
+    primary = os.getenv("GEMINI_MODEL_COMPANION", GEMINI_MODEL_COMPANION).strip()
+    chain: List[str] = []
+    for model in [primary, *GEMINI_MODEL_FALLBACK_CHAIN]:
+        if model and model not in chain:
+            chain.append(model)
+    return chain
 
 # Valid Visual Anchor Themes (Bidirectional Voice <-> Photo)
 MEMORY_ALBUM_THEMES: List[str] = [
@@ -107,10 +122,10 @@ CONFOUNDING_FACTORS: List[Dict[str, str]] = [
 # Notre Dame Global RISE AI Hackathon — Official "Identify Your Tools" Catalog
 AI_TOOLS_DISCLOSURE: List[Dict[str, str]] = [
     {
-        "tool": "Google Gemini (gemini-2.5-flash)",
+        "tool": "Google Gemini (gemini-3.8-flash -> gemini-flash-latest -> gemini-2.5-flash)",
         "category": "Generación Conversacional & STT Multimodal Fallback",
-        "role": "Conduce Terapia de Reminiscencia (<=35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM cuando el dispositivo no soporta Web Speech.",
-        "privacy_and_limits": "Sin diagnóstico médico ni consejos farmacológicos. Audio enviado solo en RAM si hace falta STT, 0 bytes almacenados.",
+        "role": "Cadena automática de respaldo con thinking desactivado (thinking_budget=0) para latencia <1.5s y mínimo gasto de tokens: conduce Terapia de Reminiscencia (<=35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
+        "privacy_and_limits": "Sin diagnóstico médico ni consejos farmacológicos. Audio enviado solo en RAM si hace falta STT, 0 bytes almacenados; respaldo local determinista si no hay red.",
     },
     {
         "tool": "Microsoft Edge-TTS Neural (es-MX-JorgeNeural / DaliaNeural)",

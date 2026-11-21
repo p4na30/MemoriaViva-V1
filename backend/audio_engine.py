@@ -15,12 +15,12 @@ import numpy as np
 
 from backend.config import (
     ANOMIC_PAUSE_THRESHOLD_SEC,
-    GEMINI_MODEL_COMPANION,
     TTS_PITCH,
     TTS_RATE,
     TTS_VOICE_FEMALE,
     TTS_VOICE_MALE,
     get_gemini_api_key,
+    get_gemini_model_chain,
 )
 
 # ---------------------------------------------------------------------------
@@ -323,7 +323,7 @@ def merge_rms_pauses_into_timestamps(
 
 
 def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
-    """Fallback multimodal STT using Gemini 2.5 Flash directly on the RAM WAV buffer.
+    """Fallback multimodal STT using Gemini fallback chain with thinking_budget=0 directly on RAM WAV.
 
     Ensures live voice capture works on Android Capacitor WebView, Firefox, and Safari
     even when browser Web SpeechRecognition is unavailable.
@@ -337,18 +337,40 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL_COMPANION,
-            contents=[
-                types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
-                (
-                    "Transcribe fielmente en español mexicano lo que dice el adulto mayor en este audio. "
-                    "Conserva muletillas naturales como 'este', 'eh', 'mmm' si existen. "
-                    "Devuelve únicamente el texto transcrito sin comentarios adicionales."
-                ),
-            ],
-        )
-        return (response.text or "").strip()
+        contents = [
+            types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
+            (
+                "Transcribe fielmente en español mexicano lo que dice el adulto mayor en este audio. "
+                "Conserva muletillas naturales como 'este', 'eh', 'mmm' si existen. "
+                "Devuelve únicamente el texto transcrito sin comentarios adicionales."
+            ),
+        ]
+        for model_name in get_gemini_model_chain():
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text:
+                    return text
+            except Exception:
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(temperature=0.0),
+                    )
+                    text = (response.text or "").strip()
+                    if text:
+                        return text
+                except Exception:
+                    continue
+        return ""
     except Exception:
         return ""
 

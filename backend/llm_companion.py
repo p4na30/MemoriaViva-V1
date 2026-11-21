@@ -11,10 +11,10 @@ from typing import Any, Dict, List, Optional, Sequence
 from pydantic import BaseModel, Field
 
 from backend.config import (
-    GEMINI_MODEL_COMPANION,
     MAX_ASSISTANT_WORDS,
     MEMORY_ALBUM_THEMES,
     get_gemini_api_key,
+    get_gemini_model_chain,
 )
 
 
@@ -294,6 +294,60 @@ def _deterministic_fallback_reply(
     }
 
 
+def _call_gemini_with_fallback(
+    contents: Any,
+    response_schema: Optional[Any] = None,
+    temperature: float = 0.45,
+) -> tuple[str, str]:
+    """Invoke Gemini across the automatic fallback chain with thinking_budget=0 (< 1.5s latency).
+
+    Tries each model in get_gemini_model_chain() (gemini-3.8-flash -> gemini-flash-latest
+    -> gemini-2.5-flash). Returns (response_text, model_name_used) or ("", "") on total failure.
+    """
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return "", ""
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    for model_name in get_gemini_model_chain():
+        config_kwargs: Dict[str, Any] = {
+            "temperature": temperature,
+            "thinking_config": types.ThinkingConfig(thinking_budget=0),
+        }
+        if response_schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = response_schema
+
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(**config_kwargs),
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text, model_name
+        except Exception:
+            # If a model rejects thinking_budget=0, retry once without thinking_config before advancing
+            try:
+                config_kwargs.pop("thinking_config", None)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+                text = (response.text or "").strip()
+                if text:
+                    return text, model_name
+            except Exception:
+                continue
+
+    return "", ""
+
+
 def generate_companion_response(
     user_text: str,
     profile: Dict[str, Any],
@@ -301,41 +355,32 @@ def generate_companion_response(
     repetition_info: Dict[str, Any],
     demo_scenario_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Invoke Gemini 2.5 Flash with structured JSON output, falling back safely if unavailable."""
-    api_key = get_gemini_api_key()
+    """Invoke Gemini fallback chain with structured JSON output and thinking_budget=0."""
     low = user_text.lower()
     is_obvious_crisis = demo_scenario_id == "demo_3_crisis" or any(k in low for k in CRISIS_KEYWORDS)
 
-    if api_key:
+    if get_gemini_api_key():
         try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
             prompt = build_master_prompt(profile, recent_history, user_text, repetition_info)
-            response = client.models.generate_content(
-                model=GEMINI_MODEL_COMPANION,
+            raw_json, used_model = _call_gemini_with_fallback(
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=CompanionStructuredOutput,
-                    temperature=0.45,
-                ),
+                response_schema=CompanionStructuredOutput,
+                temperature=0.45,
             )
-            raw_json = (response.text or "").strip()
-            parsed = CompanionStructuredOutput.model_validate_json(raw_json).model_dump()
+            if raw_json:
+                parsed = CompanionStructuredOutput.model_validate_json(raw_json).model_dump()
 
-            # Enforce strict RISE guardrails on model output
-            parsed["assistant_reply"] = enforce_word_limit(parsed["assistant_reply"])
-            if parsed["memory_album_theme"] not in MEMORY_ALBUM_THEMES:
-                parsed["memory_album_theme"] = infer_visual_theme(user_text)
-            if is_obvious_crisis:
-                parsed["emergency_triggered"] = True
-                parsed["emotional_state"] = "crisis_desorientacion"
-                # Remove any accidental cognitive question marks during acute crisis
-                parsed["assistant_reply"] = parsed["assistant_reply"].replace("¿", "").replace("?", ".")
-            parsed["engine_used"] = GEMINI_MODEL_COMPANION
-            return parsed
+                # Enforce strict RISE guardrails on model output
+                parsed["assistant_reply"] = enforce_word_limit(parsed["assistant_reply"])
+                if parsed["memory_album_theme"] not in MEMORY_ALBUM_THEMES:
+                    parsed["memory_album_theme"] = infer_visual_theme(user_text)
+                if is_obvious_crisis:
+                    parsed["emergency_triggered"] = True
+                    parsed["emotional_state"] = "crisis_desorientacion"
+                    # Remove any accidental cognitive question marks during acute crisis
+                    parsed["assistant_reply"] = parsed["assistant_reply"].replace("¿", "").replace("?", ".")
+                parsed["engine_used"] = used_model
+                return parsed
         except Exception:
             pass
 
@@ -354,26 +399,26 @@ def generate_photo_starter(photo: Dict[str, Any], profile: Dict[str, Any]) -> Di
     caption = photo.get("caption", "")
     theme = photo.get("theme", "familia_hogar")
 
-    api_key = get_gemini_api_key()
-    if api_key:
+    if get_gemini_api_key():
         try:
-            from google import genai
-
-            client = genai.Client(api_key=api_key)
             prompt = (
                 f"Eres MemoriaViva, compañero cálido para {nombre}. "
                 f"Está viendo en su marco digital la foto '{title}' ({caption}). "
                 "Escribe un saludo breve y cariñoso (máximo 28 palabras) con UNA SOLA pregunta "
                 "abierta para invitarlo a recordar esa imagen sin presionarlo. Solo texto plano."
             )
-            resp = client.models.generate_content(model=GEMINI_MODEL_COMPANION, contents=prompt)
-            text = enforce_word_limit((resp.text or "").strip(), max_words=35)
+            raw_text, used_model = _call_gemini_with_fallback(
+                contents=prompt,
+                response_schema=None,
+                temperature=0.5,
+            )
+            text = enforce_word_limit(raw_text, max_words=35) if raw_text else ""
             if text:
                 return {
                     "assistant_reply": text,
                     "memory_album_theme": theme,
                     "conversation_topic_summary": f"Inicio de reminiscencia visual sobre '{title}'.",
-                    "engine_used": GEMINI_MODEL_COMPANION,
+                    "engine_used": used_model,
                 }
         except Exception:
             pass

@@ -53,10 +53,10 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebChromeClient;
 
 public class MainActivity extends BridgeActivity {
     private static final int AUDIO_PERMISSION_CODE = 1001;
@@ -78,9 +78,9 @@ public class MainActivity extends BridgeActivity {
             );
         }
 
-        // Grant getUserMedia audio capture inside Capacitor WebView
+        // Extend Capacitor's BridgeWebChromeClient so microphone + file uploads + JS dialogs all work
         if (this.bridge != null && this.bridge.getWebView() != null) {
-            this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+            this.bridge.getWebView().setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
                 @Override
                 public void onPermissionRequest(final PermissionRequest request) {
                     runOnUiThread(() -> request.grant(request.getResources()));

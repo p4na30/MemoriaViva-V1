@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import io
+import threading
 from typing import Any, Dict, Optional
 
 import qrcode
@@ -18,6 +19,14 @@ from backend.config import (
     get_telegram_default_chat_id,
 )
 from backend.database import DatabaseManager
+
+
+def format_signed(value: Any, decimals: int = 1) -> str:
+    """Format numeric deltas/Z-scores with a single unambiguous sign (never '+-')."""
+    num = float(value or 0.0)
+    if abs(num) < (0.5 * (10 ** (-decimals))):
+        return f"{0.0:.{decimals}f}"
+    return f"{num:+.{decimals}f}"
 
 
 class TelegramNotifier:
@@ -186,6 +195,56 @@ class TelegramNotifier:
         except Exception:
             return False, "network_fallback"
 
+    def _queue_and_dispatch(
+        self,
+        profile_id: str,
+        level: int,
+        title: str,
+        body: str,
+        html_text: str,
+        chat_id: str = "",
+        sync: bool = False,
+    ) -> Dict[str, Any]:
+        """Persist Telegram log immediately and dispatch HTTP POST asynchronously (non-blocking)."""
+        effective_chat = chat_id or get_telegram_default_chat_id()
+        has_live_channel = bool(self.bot_token and effective_chat)
+        initial_status = "queued_async" if has_live_channel else "local_preview"
+
+        log_entry = self.db.insert_telegram_log(
+            profile_id=profile_id,
+            level=level,
+            title=title,
+            message=body,
+            delivered=False,
+            channel_status=initial_status,
+        )
+
+        if has_live_channel:
+            log_id = int(log_entry["id"])
+
+            def _worker() -> None:
+                delivered, status = self._send_raw_message(effective_chat, html_text)
+                try:
+                    self.db.update_telegram_log_status(log_id, delivered, status)
+                except Exception:
+                    pass
+
+            if sync:
+                _worker()
+                latest = next(
+                    (x for x in self.db.get_telegram_logs(profile_id, limit=5) if x["id"] == log_id),
+                    log_entry,
+                )
+                return latest
+
+            threading.Thread(
+                target=_worker,
+                name=f"tg-alert-L{level}-{log_id}",
+                daemon=True,
+            ).start()
+
+        return log_entry
+
     # ------------------------------------------------------------------
     # 3-Level Clinical Triage Alerts (Abstract Summary Filter enforced)
     # ------------------------------------------------------------------
@@ -197,6 +256,7 @@ class TelegramNotifier:
         topic_summary: str,
         dinner_tip: str,
         chat_id: str = "",
+        sync: bool = False,
     ) -> Dict[str, Any]:
         """Level 1 (Green): Warm daily pulse without raw transcript or audio."""
         title = f"Nivel 1 · Pulso Diario de {elder_name}"
@@ -205,18 +265,14 @@ class TelegramNotifier:
             f"Resumen (Filtro de Privacidad): {topic_summary}\n"
             f"Sugerencia para la cena: {dinner_tip}"
         )
-        effective_chat = chat_id or get_telegram_default_chat_id()
-        delivered, status = self._send_raw_message(
-            effective_chat,
-            f"<b>[Nivel 1 - Pulso Diario] {elder_name}</b>\n{body}",
-        )
-        return self.db.insert_telegram_log(
+        return self._queue_and_dispatch(
             profile_id=profile_id,
             level=1,
             title=title,
-            message=body,
-            delivered=delivered,
-            channel_status=status,
+            body=body,
+            html_text=f"<b>[Nivel 1 - Pulso Diario] {elder_name}</b>\n{body}",
+            chat_id=chat_id,
+            sync=sync,
         )
 
     def send_level2_preventive_warning(
@@ -225,28 +281,29 @@ class TelegramNotifier:
         elder_name: str,
         evaluation: Dict[str, Any],
         chat_id: str = "",
+        sync: bool = False,
     ) -> Dict[str, Any]:
         """Level 2 (Amber): Non-diagnostic longitudinal trend warning."""
         title = f"Nivel 2 · Aviso Preventivo de Tendencia ({elder_name})"
+        mattr_pct = format_signed(evaluation.get("delta_mattr_pct_display", 0), 1)
+        z_mattr = format_signed(evaluation.get("z_mattr", 0), 2)
+        pause_pct = format_signed(evaluation.get("delta_pause_pct_display", 0), 1)
+        z_pause = format_signed(evaluation.get("z_pause", 0), 2)
         body = (
             f"Se detectó una variación sostenida frente a la línea base personal (D1-D14): "
-            f"MATTR {evaluation.get('delta_mattr_pct_display', 0)}% (Z={evaluation.get('z_mattr', 0)}), "
-            f"Pausas +{evaluation.get('delta_pause_pct_display', 0)}% (Z={evaluation.get('z_pause', 0)}).\n"
+            f"MATTR {mattr_pct}% (Z={z_mattr}), "
+            f"Pausas {pause_pct}% (Z={z_pause}).\n"
             "Aviso de apoyo clínico no diagnóstico: revisa variables de confusión (sueño, medicación, Sundowning) "
             "en Gobernanza RISE y comparte el PDF con su geriatra si persiste."
         )
-        effective_chat = chat_id or get_telegram_default_chat_id()
-        delivered, status = self._send_raw_message(
-            effective_chat,
-            f"<b>[Nivel 2 - Aviso Preventivo] {elder_name}</b>\n{body}",
-        )
-        return self.db.insert_telegram_log(
+        return self._queue_and_dispatch(
             profile_id=profile_id,
             level=2,
             title=title,
-            message=body,
-            delivered=delivered,
-            channel_status=status,
+            body=body,
+            html_text=f"<b>[Nivel 2 - Aviso Preventivo] {elder_name}</b>\n{body}",
+            chat_id=chat_id,
+            sync=sync,
         )
 
     def send_level3_sos_crisis(
@@ -256,6 +313,7 @@ class TelegramNotifier:
         reason: str,
         dinner_tip: str,
         chat_id: str = "",
+        sync: bool = False,
     ) -> Dict[str, Any]:
         """Level 3 (Red): Immediate S.O.S. alert upon acute disorientation or distress."""
         title = f"Nivel 3 · ALERTA ROJA S.O.S. ({elder_name})"
@@ -264,16 +322,12 @@ class TelegramNotifier:
             "Acción tomada: MemoriaViva suspendió preguntas cognitivas y aplicó Contención por Validación de Naomi Feil.\n"
             f"Acción recomendada: {dinner_tip}"
         )
-        effective_chat = chat_id or get_telegram_default_chat_id()
-        delivered, status = self._send_raw_message(
-            effective_chat,
-            f"<b>[ALERTA ROJA S.O.S. - NIVEL 3] {elder_name}</b>\n{body}",
-        )
-        return self.db.insert_telegram_log(
+        return self._queue_and_dispatch(
             profile_id=profile_id,
             level=3,
             title=title,
-            message=body,
-            delivered=delivered,
-            channel_status=status,
+            body=body,
+            html_text=f"<b>[ALERTA ROJA S.O.S. - NIVEL 3] {elder_name}</b>\n{body}",
+            chat_id=chat_id,
+            sync=sync,
         )

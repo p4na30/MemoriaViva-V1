@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -60,6 +60,14 @@ const THEME_BADGE_LABELS: Record<string, string> = {
   mascotas: "Mascotas",
 };
 
+function formatSigned(value: number, decimals = 1): string {
+  const num = Number.isFinite(value) ? value : 0;
+  if (Math.abs(num) < 0.5 * Math.pow(10, -decimals)) {
+    return (0).toFixed(decimals);
+  }
+  return `${num > 0 ? "+" : ""}${num.toFixed(decimals)}`;
+}
+
 export const CaregiverDashboard: React.FC<Props> = ({
   state,
   theme,
@@ -89,6 +97,33 @@ export const CaregiverDashboard: React.FC<Props> = ({
   const [adminTgToken, setAdminTgToken] = useState("");
   const [adminTgUser, setAdminTgUser] = useState(state.telegram_status.bot_username || "");
   const [adminChatId, setAdminChatId] = useState(state.account.telegram_chat_id || "");
+
+  // Keep controlled Settings & Album inputs synchronized when server state updates (e.g., demo reset / Telegram bind)
+  useEffect(() => {
+    setEditName(state.profile.paciente.nombre_completo);
+    setEditPreferred(state.profile.paciente.nombre_preferido);
+    setEditCity(state.profile.paciente.ciudad_residencia);
+  }, [
+    state.profile.paciente.nombre_completo,
+    state.profile.paciente.nombre_preferido,
+    state.profile.paciente.ciudad_residencia,
+  ]);
+
+  useEffect(() => {
+    setEditCaregiver(state.account.caregiver_name);
+    setEditVoice(state.account.voice_gender);
+    setRotationSec(state.account.rotation_interval_sec || 8);
+    setAdminChatId(state.account.telegram_chat_id || "");
+  }, [
+    state.account.caregiver_name,
+    state.account.voice_gender,
+    state.account.rotation_interval_sec,
+    state.account.telegram_chat_id,
+  ]);
+
+  useEffect(() => {
+    setAdminTgUser(state.telegram_status.bot_username || "");
+  }, [state.telegram_status.bot_username]);
 
   // Simulator tab state
   const [customText, setCustomText] = useState("");
@@ -413,14 +448,14 @@ export const CaregiverDashboard: React.FC<Props> = ({
                 <div className="flex items-center justify-between text-xs font-medium" style={{ color: "var(--text-muted)" }}>
                   <span>Riqueza Léxica (MATTR W=20)</span>
                   <span className="tabular-nums font-semibold" style={{ color: "var(--primary)" }}>
-                    {ev.delta_mattr_pct_display}% vs base
+                    {formatSigned(ev.delta_mattr_pct_display, 1)}% vs base
                   </span>
                 </div>
                 <div className="text-3xl font-bold tabular-nums" style={{ color: "var(--primary)" }}>
                   {ev.recent_mattr_mean.toFixed(3)}
                 </div>
                 <p className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>
-                  Línea base: {ev.baseline_mattr_mean.toFixed(3)} · Z-Score personal: {ev.z_mattr}
+                  Línea base: {ev.baseline_mattr_mean.toFixed(3)} · Z-Score personal: {formatSigned(ev.z_mattr, 2)}
                 </p>
               </div>
 
@@ -428,14 +463,14 @@ export const CaregiverDashboard: React.FC<Props> = ({
                 <div className="flex items-center justify-between text-xs font-medium" style={{ color: "var(--text-muted)" }}>
                   <span>Ritmo del Habla (Pausas)</span>
                   <span className="tabular-nums font-semibold" style={{ color: "var(--amber)" }}>
-                    +{ev.delta_pause_pct_display}% vs base
+                    {formatSigned(ev.delta_pause_pct_display, 1)}% vs base
                   </span>
                 </div>
                 <div className="text-3xl font-bold tabular-nums" style={{ color: "var(--amber)" }}>
                   {ev.recent_pause_mean.toFixed(2)} s
                 </div>
                 <p className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>
-                  Línea base: {ev.baseline_pause_mean.toFixed(2)} s · Z-Score personal: +{ev.z_pause}
+                  Línea base: {ev.baseline_pause_mean.toFixed(2)} s · Z-Score personal: {formatSigned(ev.z_pause, 2)}
                 </p>
               </div>
             </div>

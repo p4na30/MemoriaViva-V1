@@ -64,6 +64,8 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
   const vadSilenceMs = Math.round((state.silence_threshold_sec || 3.8) * 1000);
 
   const [photoIdx, setPhotoIdx] = useState(0);
+  const [previousPhoto, setPreviousPhoto] = useState<AlbumPhoto | null>(null);
+  const [activePhotoVisible, setActivePhotoVisible] = useState(true);
   const [anchoredBadge, setAnchoredBadge] = useState<string | null>(null);
   const [clockNow, setClockNow] = useState(new Date());
 
@@ -100,6 +102,26 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   const currentPhoto: AlbumPhoto | undefined = photos[photoIdx % Math.max(1, photos.length)];
+  const lastPhotoRef = useRef<AlbumPhoto | undefined>(currentPhoto);
+
+  // True dual-layer crossfade without dark flashes when switching postcards
+  useEffect(() => {
+    if (!currentPhoto) return;
+    if (lastPhotoRef.current && lastPhotoRef.current.filename !== currentPhoto.filename) {
+      setPreviousPhoto(lastPhotoRef.current);
+      setActivePhotoVisible(false);
+      const rafId = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => setActivePhotoVisible(true));
+      });
+      const clearId = window.setTimeout(() => setPreviousPhoto(null), 750);
+      lastPhotoRef.current = currentPhoto;
+      return () => {
+        window.cancelAnimationFrame(rafId);
+        window.clearTimeout(clearId);
+      };
+    }
+    lastPhotoRef.current = currentPhoto;
+  }, [currentPhoto]);
 
   // Clock ticker
   useEffect(() => {
@@ -482,14 +504,25 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-white select-none">
-      {/* Fullscreen Family Photo Frame */}
+      {/* Fullscreen Family Photo Frame (True Dual-Layer Crossfade) */}
       {currentPhoto ? (
-        <img
-          key={currentPhoto.filename}
-          src={apiUrl(currentPhoto.url)}
-          alt={currentPhoto.title}
-          className="absolute inset-0 w-full h-full object-cover photo-transition"
-        />
+        <>
+          {previousPhoto && (
+            <img
+              src={apiUrl(previousPhoto.url)}
+              alt={previousPhoto.title}
+              className="absolute inset-0 w-full h-full object-cover opacity-100"
+            />
+          )}
+          <img
+            key={currentPhoto.filename}
+            src={apiUrl(currentPhoto.url)}
+            alt={currentPhoto.title}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-out ${
+              activePhotoVisible ? "opacity-100" : "opacity-0"
+            }`}
+          />
+        </>
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-cyan-950" />
       )}

@@ -589,6 +589,20 @@ class DatabaseManager:
             "channel_status": channel_status,
         }
 
+    def update_telegram_log_status(
+        self, log_id: int, delivered: bool, channel_status: str
+    ) -> None:
+        """Update delivery outcome of an asynchronously dispatched Telegram alert."""
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_logs
+                SET delivered = ?, channel_status = ?
+                WHERE id = ?
+                """,
+                (1 if delivered else 0, channel_status, int(log_id)),
+            )
+
     def get_telegram_logs(
         self, profile_id: str = "don_manuel", limit: int = 25
     ) -> List[Dict[str, Any]]:

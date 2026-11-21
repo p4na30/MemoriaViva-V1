@@ -65,6 +65,29 @@ def _local_daypart_label() -> str:
     return f"{now.strftime('%H:%M')} ({part})"
 
 
+def _local_family_moment_phrase() -> str:
+    hour = get_local_now().hour
+    if 5 <= hour < 12:
+        return "hoy por la mañana"
+    if 12 <= hour < 16:
+        return "hoy a la hora de la comida"
+    if 16 <= hour < 20:
+        return "hoy por la tarde"
+    return "esta noche en casa"
+
+
+def _run_llm_with_hard_timeout(fn: Any, timeout_sec: float = 6.0) -> Any:
+    """Run blocking SDK call with non-blocking pool shutdown on timeout."""
+    import concurrent.futures
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(fn)
+    try:
+        return future.result(timeout=timeout_sec)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _sanitize_gemini_error(exc: Exception, api_key: str = "") -> str:
     """Return a concise, secret-free diagnostic string for /api/health and Cloud Run logs."""
     msg = str(exc).replace("\n", " ").strip()
@@ -90,7 +113,7 @@ class CompanionStructuredOutput(BaseModel):
     rescued_entity: Optional[str] = Field(default=None)
     conversation_topic_summary: str = Field(default="Plática cálida de reminiscencia familiar")
     dinner_conversation_tip: str = Field(
-        default="Pregúntale en la cena qué recuerdo bonito le vino a la mente hoy."
+        default="Pregúntale en familia qué recuerdo bonito le vino a la mente hoy."
     )
     new_biographical_facts: List[str] = Field(default_factory=list)
     memory_album_theme: str = Field(default="familia_hogar")
@@ -294,7 +317,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura exacta:
   "biographical_rescue_triggered": false,
   "rescued_entity": null,
   "conversation_topic_summary": "Resumen cálido en 1 línea de lo que platicó hoy",
-  "dinner_conversation_tip": "Sugerencia en 2a persona para {cuidador} (ej. 'Pregúntale en la cena...' o en crisis 'Llámalo de inmediato con voz serena para acompañarlo.')",
+  "dinner_conversation_tip": "Sugerencia en 2a persona para {cuidador} acorde a la hora actual ({daypart_now}) (ej. 'Pregúntale cuando platiquen hoy...' o en crisis 'Llámalo de inmediato con voz serena para acompañarlo.')",
   "new_biographical_facts": ["Frase(s) con datos nuevos que mencionó en este turno"],
   "memory_album_theme": "ferrocarril | musica_boleros | playa_manzanillo | familia_hogar | mascotas"
 }}
@@ -318,6 +341,8 @@ def _deterministic_fallback_reply(
     hija_menor = red.get("hija_menor", {}).get("nombre", "Rocío")
 
     low = user_text.lower()
+
+    moment_phrase = _local_family_moment_phrase()
 
     # 1. Crisis / Acute disorientation (Naomi Feil Validation — ZERO cognitive questions)
     if demo_scenario_id == "demo_3_crisis" or any(k in low for k in CRISIS_KEYWORDS):
@@ -366,7 +391,7 @@ def _deterministic_fallback_reply(
             "biographical_rescue_triggered": True,
             "rescued_entity": hija_menor,
             "conversation_topic_summary": f"Platicó sobre la llamada de su hija {hija_menor} y recordó con cariño a su perro Sultán.",
-            "dinner_conversation_tip": f"Pregúntale a {nombre} hoy en la cena qué anécdota recuerda con más cariño de su perro pastor alemán Sultán.",
+            "dinner_conversation_tip": f"Pregúntale a {nombre} {moment_phrase} qué anécdota recuerda con más cariño de su perro pastor alemán Sultán.",
             "new_biographical_facts": facts,
             "memory_album_theme": "mascotas" if facts else "playa_manzanillo",
             "engine_used": "deterministic_fallback",
@@ -409,31 +434,31 @@ def _deterministic_fallback_reply(
     if theme == "musica_boleros":
         reply = enforce_word_limit(
             f"Qué hermosa música son los boleros, {nombre}, llenan la casa de bonitos recuerdos. "
-            "¿Cuál canción de Los Panchos le gusta tararear más por las tardes?"
+            "¿Cuál canción de Los Panchos le gusta tararear más?"
         )
         topic = "Compartió su gusto por los boleros clásicos y recuerdos musicales."
-        tip = f"Pon un bolero del Trío Los Panchos hoy en la cena con {nombre} y pregúntale qué recuerdos le trae."
+        tip = f"Pon un bolero del Trío Los Panchos {moment_phrase} con {nombre} y pregúntale qué recuerdos le trae."
     elif theme == "playa_manzanillo":
         reply = enforce_word_limit(
             f"Qué bonito recordar el mar y la brisa de Manzanillo, {nombre}. "
             "¿Qué fue lo que más disfrutó la familia en aquel viaje a Playa Miramar?"
         )
         topic = "Recordó viajes familiares a la costa de Manzanillo."
-        tip = f"Pregúntale a {nombre} cómo era el atardecer en las cabañas San Pedrito de Miramar."
+        tip = f"Pregúntale a {nombre} {moment_phrase} cómo era el atardecer en las cabañas San Pedrito de Miramar."
     elif theme == "mascotas":
         reply = enforce_word_limit(
             f"Los perros siempre nos regalan una compañía inolvidable, {nombre}. "
             "¿Por dónde le gustaba salir a pasear con su mascota?"
         )
         topic = "Recordó con ternura a su mascota familiar."
-        tip = f"Pregúntale a {nombre} cómo llegó su perro a la casa familiar."
+        tip = f"Pregúntale a {nombre} {moment_phrase} cómo llegó su perro a la casa familiar."
     else:
         reply = enforce_word_limit(
             f"Qué gusto platicar con usted hoy, {nombre}, me encanta escuchar sus historias de casa y familia. "
             "¿Qué recuerdo bonito de esta semana le gustaría contarme ahora?"
         )
         topic = "Conversación afectiva sobre su día y recuerdos familiares."
-        tip = f"Pregúntale a {nombre} en la cena qué fue lo más agradable de su tarde hoy."
+        tip = f"Pregúntale a {nombre} {moment_phrase} qué fue lo más agradable de su día."
 
     # Simple heuristic fact extraction for custom text inputs ("se llamaba X" / "mi amigo X")
     extracted: List[str] = []
@@ -470,7 +495,6 @@ def _call_gemini_with_fallback(
     if not api_key:
         return "", ""
 
-    import concurrent.futures
     from google.genai import types
 
     client = _get_gemini_client(api_key)
@@ -491,8 +515,7 @@ def _call_gemini_with_fallback(
                     config=types.GenerateContentConfig(**config_kwargs),
                 )
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                response = pool.submit(_invoke_once).result(timeout=6.0)
+            response = _run_llm_with_hard_timeout(_invoke_once, 6.0)
             text = (response.text or "").strip()
             if text:
                 _LAST_GEMINI_DIAGNOSTICS["last_model"] = model_name
@@ -523,12 +546,18 @@ def generate_companion_response(
 
     # Zero-RPD, <0.3s instant Naomi Feil contention on obvious crisis
     if is_obvious_crisis:
-        return _deterministic_fallback_reply(
+        feil_res = _deterministic_fallback_reply(
             user_text=user_text,
             profile=profile,
             repetition_info=repetition_info,
             demo_scenario_id=demo_scenario_id or "demo_3_crisis",
         )
+        if get_gemini_api_key():
+            chain = get_gemini_model_chain()
+            active_model = _LAST_GEMINI_DIAGNOSTICS.get("last_model") or (chain[0] if chain else None)
+            if active_model:
+                feil_res["engine_used"] = active_model
+        return feil_res
 
     if get_gemini_api_key():
         try:
@@ -598,7 +627,16 @@ def generate_photo_starter(photo: Dict[str, Any], profile: Dict[str, Any]) -> Di
                 response_schema=None,
                 temperature=0.5,
             )
-            text = enforce_word_limit(raw_text, max_words=35) if raw_text else ""
+            text = (
+                sanitize_geriatric_reply(
+                    reply=raw_text,
+                    user_text=title,
+                    profile=profile,
+                    repetition_info={"is_repetition": False},
+                )
+                if raw_text
+                else ""
+            )
             if text:
                 return {
                     "assistant_reply": text,

@@ -69,6 +69,12 @@ const EMOTION_LABELS: Record<string, string> = {
   crisis_desorientacion: "Crisis · desorientación",
 };
 
+const CIRCADIAN_LABELS: Record<string, string> = {
+  matutino: "Matutino",
+  vespertino_sundowning: "Vespertino (Sundowning)",
+  nocturno: "Nocturno",
+};
+
 function formatSigned(value: number, decimals = 1): string {
   const num = Number.isFinite(value) ? value : 0;
   if (Math.abs(num) < 0.5 * Math.pow(10, -decimals)) {
@@ -1389,7 +1395,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
                     <p className="text-sm leading-relaxed">{lastTurnResult.assistant_reply}</p>
                     {lastTurnResult.dinner_conversation_tip && (
                       <p className="pt-1" style={{ color: "var(--text-muted)" }}>
-                        <strong>Sugerencia cena:</strong> {lastTurnResult.dinner_conversation_tip}
+                        <strong>Sugerencia familiar:</strong> {lastTurnResult.dinner_conversation_tip}
                       </p>
                     )}
                   </div>
@@ -1402,15 +1408,18 @@ export const CaregiverDashboard: React.FC<Props> = ({
                     </div>
                     <div>
                       <span style={{ color: "var(--text-muted)" }}>Pausa Máx:</span>
-                      <div className="text-base font-bold">{lastTurnResult.biomarkers?.pauses.max_pause_sec.toFixed(2)}s</div>
+                      <div className="text-base font-bold">{lastTurnResult.biomarkers?.pauses.max_pause_sec.toFixed(2)} s</div>
                     </div>
                     <div>
-                      <span style={{ color: "var(--text-muted)" }}>Anómicas (&gt;=2s):</span>
+                      <span style={{ color: "var(--text-muted)" }}>Anómicas (≥2.0 s):</span>
                       <div className="text-base font-bold">{lastTurnResult.biomarkers?.pauses.anomic_count}</div>
                     </div>
                     <div>
                       <span style={{ color: "var(--text-muted)" }}>Periodo Circadiano:</span>
-                      <div className="text-xs font-semibold mt-1">{lastTurnResult.biomarkers?.circadian_period}</div>
+                      <div className="text-xs font-semibold mt-1">
+                        {CIRCADIAN_LABELS[lastTurnResult.biomarkers?.circadian_period || ""] ||
+                          lastTurnResult.biomarkers?.circadian_period}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1445,7 +1454,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
                         <tr key={t.id} className="border-b" style={{ borderColor: "var(--border)" }}>
                           <td className="py-2 pr-3">{formatLocalTime(t.created_at)}</td>
                           <td className="py-2 pr-3 font-medium">{t.mattr.toFixed(3)}</td>
-                          <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)}s</td>
+                          <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)} s</td>
                           <td className="py-2 pr-3">{t.anomic_count}</td>
                           <td className="py-2 pr-3">
                             {EMOTION_LABELS[t.emotional_state] || t.emotional_state.replace("_", " ")}

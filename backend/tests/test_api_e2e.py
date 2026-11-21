@@ -382,7 +382,7 @@ def test_manual_onboarding_preserves_step2_telegram_pairing(tmp_path: Path, monk
     assert tg_after["status"] == "paired"
     assert tg_after["link_uuid"] == init_uuid
     assert tg_after["chat_id"] == "44422"
-    assert tg_after["linked_user_name"] == "Carlos"
+    assert tg_after["linked_user_name"] == "Carlos Morales"
 
 
 def test_audio_only_turn_without_browser_transcript_or_gemini_key(tmp_path: Path, monkeypatch) -> None:
@@ -548,7 +548,8 @@ def test_qa_fixes_acto3_telegram_name_accents_and_level2_parity(tmp_path: Path, 
     assert res_inb["inbound_message"]["text_content"].startswith("Recado de Laura:")
     assert "UsuarioRandom99" not in res_inb["inbound_message"]["text_content"]
 
-    # 5. Reset Demo clears consent_events cleanly
+    # 5. Reset Demo clears rehearsal consent_events and restores the 1 baseline caregiver_onboarding consent
     r_reset = client.post("/api/demo/reset")
     assert r_reset.status_code == 200
-    assert r_reset.json()["state"]["consent_events"] == []
+    assert len(r_reset.json()["state"]["consent_events"]) == 1
+    assert r_reset.json()["state"]["consent_events"][0]["consent_type"] == "caregiver_onboarding"

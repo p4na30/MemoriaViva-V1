@@ -73,7 +73,15 @@ class ClinicalReportPDF(FPDF):
     def safe(self, text: str) -> str:
         if self.unicode_enabled:
             return str(text)
-        return str(text).encode("latin-1", "replace").decode("latin-1")
+        normalized = (
+            str(text)
+            .replace("→", "->")
+            .replace("≤", "<=")
+            .replace("≥", ">=")
+            .replace("–", "-")
+            .replace("—", "-")
+        )
+        return normalized.encode("latin-1", "replace").decode("latin-1")
 
     def full_w(self) -> float:
         return self.w - self.l_margin - self.r_margin
@@ -250,7 +258,7 @@ def generate_clinical_pdf_bytes(
                 f"Variables de confusión: {factors_str}\n"
                 f"Notas clínicas: {rev.get('clinical_notes', '')}\n"
                 f"Instantánea: MATTR={float(rev.get('mattr_snapshot', 0)):.3f}, "
-                f"Pausas={float(rev.get('pause_snapshot', 0)):.2f}s"
+                f"Pausas={float(rev.get('pause_snapshot', 0)):.2f} s"
             )
             pdf.body_paragraph(body_line, line_h=4.5, border="LBR", fill=False)
             pdf.ln(1.8)
@@ -311,13 +319,35 @@ def generate_clinical_pdf_bytes(
     pdf.section_heading("4. Bitácora Resumida de Sesiones Recientes (SQLite)")
     pdf.set_font(pdf.base_font, "", 8.2)
     pdf.set_text_color(51, 65, 85)
+    circ_pdf_map = {
+        "matutino": "Matutino",
+        "vespertino_sundowning": "Vesp. (Sundowning)",
+        "nocturno": "Nocturno",
+    }
+    emo_pdf_map = {
+        "tranquilo": "Tranquilo",
+        "alegre": "Alegre",
+        "nostalgico": "Nostálgico",
+        "frustrado": "Frustrado",
+        "crisis_desorientacion": "Crisis · desorientación",
+    }
+    theme_pdf_map = {
+        "ferrocarril": "Ferrocarril",
+        "musica_boleros": "Boleros",
+        "playa_manzanillo": "Playa Manzanillo",
+        "familia_hogar": "Familia y Hogar",
+        "mascotas": "Mascotas",
+    }
     if recent_turns:
         for t in list(recent_turns)[:8]:
+            c_raw = str(t.get("circadian_period") or "matutino")
+            e_raw = str(t.get("emotional_state") or "tranquilo").lower()
+            th_raw = str(t.get("memory_album_theme") or "familia_hogar")
             line = (
-                f"- [{_fmt_local_iso(t.get('created_at'))} | {t.get('circadian_period', '')}] "
-                f"MATTR={float(t.get('mattr', 0)):.3f} | Pausa Máx={float(t.get('max_pause_sec', 0)):.2f}s | "
-                f"Anómicas={t.get('anomic_count', 0)} | Emoción={t.get('emotional_state', '')} | "
-                f"Tema={t.get('memory_album_theme', '')} | Nivel={t.get('alert_level', 1)}"
+                f"- [{_fmt_local_iso(t.get('created_at'))} | {circ_pdf_map.get(c_raw, c_raw)}] "
+                f"MATTR={float(t.get('mattr', 0)):.3f} | Pausa Máx={float(t.get('max_pause_sec', 0)):.2f} s | "
+                f"Anómicas={t.get('anomic_count', 0)} | Emoción={emo_pdf_map.get(e_raw, e_raw.capitalize())} | "
+                f"Tema={theme_pdf_map.get(th_raw, th_raw)} | Nivel={t.get('alert_level', 1)}"
             )
             pdf.body_paragraph(line, line_h=4.5)
     else:

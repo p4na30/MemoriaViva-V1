@@ -191,6 +191,7 @@ def create_app(
             link_uuid=tg_link["link_uuid"],
             chat_id=account.get("telegram_chat_id", ""),
             link_record=tg_link,
+            caregiver_name=account.get("caregiver_name", "") if account.get("is_registered") else "",
         )
         return {
             "app_mode": mode,
@@ -594,7 +595,7 @@ def create_app(
                 elder_name=elder_name,
                 emotional_state=llm_res.get("emotional_state", "tranquilo"),
                 topic_summary=llm_res.get("conversation_topic_summary", "Conversación cálida de reminiscencia."),
-                dinner_tip=llm_res.get("dinner_conversation_tip", "Pregúntale en la cena cómo estuvo su tarde."),
+                dinner_tip=llm_res.get("dinner_conversation_tip", "Pregúntale hoy en familia qué fue lo más agradable de su día."),
                 chat_id=chat_id,
                 sync=False,
             )
@@ -774,7 +775,15 @@ def create_app(
         if req.voice_gender in ("male", "female"):
             cfg["voice_gender"] = req.voice_gender
         if req.caregiver_name is not None and req.caregiver_name.strip():
-            cfg["caregiver_name"] = req.caregiver_name.strip()
+            clean_cg = req.caregiver_name.strip()
+            cfg["caregiver_name"] = clean_cg
+            pid = _active_profile_id()
+            profile = storage.load_profile(pid)
+            profile.setdefault("contacto_emergencia_telegram", {})["nombre"] = clean_cg
+            profile.setdefault("red_familiar_y_afectiva", {}).setdefault("hija_mayor_cuidadora", {})[
+                "nombre"
+            ] = clean_cg
+            storage.save_profile(profile, pid)
         if req.telegram_chat_id is not None:
             cfg["telegram_chat_id"] = req.telegram_chat_id.strip()
         if req.new_pin is not None and req.new_pin.strip():
@@ -810,6 +819,7 @@ def create_app(
             link_uuid=tg_link["link_uuid"],
             chat_id=cfg.get("telegram_chat_id", ""),
             link_record=tg_link,
+            caregiver_name=cfg.get("caregiver_name", "") if cfg.get("is_registered") else "",
         )
         return {"ok": True, "telegram_status": deep}
 
@@ -817,11 +827,13 @@ def create_app(
     def telegram_regenerate_uuid() -> Dict[str, Any]:
         """Revoke previous Telegram links for the active profile and issue a fresh UUID v4."""
         pid = _active_profile_id()
+        cfg = storage.load_account_config()
         new_link = storage.regenerate_telegram_link(pid)
         deep = telegram.get_deep_link_info(
             link_uuid=new_link["link_uuid"],
             chat_id="",
             link_record=new_link,
+            caregiver_name=cfg.get("caregiver_name", "") if cfg.get("is_registered") else "",
         )
         return {"ok": True, "telegram_status": deep, "state": _build_full_state()}
 
@@ -835,6 +847,7 @@ def create_app(
             link_uuid=tg_link["link_uuid"],
             chat_id=cfg.get("telegram_chat_id", ""),
             link_record=tg_link,
+            caregiver_name=cfg.get("caregiver_name", "") if cfg.get("is_registered") else "",
         )
         return {"ok": True, "verification": res, "telegram_status": deep}
 
@@ -919,7 +932,14 @@ def create_app(
                 detail="El reinicio de Demo no está disponible en la versión limpia (production).",
             )
         pid = _active_profile_id()
+        cfg = storage.load_account_config()
         db.reset_demo_state(pid)
+        db.insert_consent_event(
+            profile_id=pid,
+            consent_type="caregiver_onboarding",
+            acknowledged_by=cfg.get("caregiver_name", "Laura González"),
+            summary_text="Consentimiento Dual Asistido RISE activo (Zero-Raw-Cloud Audio y apoyo no diagnóstico).",
+        )
         if pid == "don_manuel":
             storage.reset_demo_profile()
         storage.ensure_sample_photos(pid)

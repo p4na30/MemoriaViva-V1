@@ -261,7 +261,7 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
                   >
                     <span>
                       Instantánea: MATTR {rev.mattr_snapshot.toFixed(3)} · Pausas{" "}
-                      {rev.pause_snapshot.toFixed(2)}s
+                      {rev.pause_snapshot.toFixed(2)} s
                     </span>
                     <span>{formatLocalDateTime(rev.created_at)}</span>
                   </div>

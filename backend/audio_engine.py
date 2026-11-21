@@ -333,6 +333,18 @@ def merge_rms_pauses_into_timestamps(
     return result
 
 
+def _run_with_hard_timeout(fn: Any, timeout_sec: float) -> Any:
+    """Execute fn in a worker thread without blocking on shutdown(wait=True) when timeout expires."""
+    import concurrent.futures
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(fn)
+    try:
+        return future.result(timeout=timeout_sec)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def transcribe_audio_ram_google_free(wav_bytes: bytes) -> str:
     """Zero-API-Key Spanish (es-MX) STT in RAM via SpeechRecognition (works on Firefox & Android APK)."""
     if not wav_bytes:
@@ -368,7 +380,6 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
     if api_key and chain:
         model_name = chain[0]
         try:
-            import concurrent.futures
             from google import genai
             from google.genai import types
 
@@ -393,10 +404,9 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
                 )
                 return (resp.text or "").strip()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                text = pool.submit(_call_stt).result(timeout=6.0)
-                if text:
-                    return text
+            text = _run_with_hard_timeout(_call_stt, 6.0)
+            if text:
+                return text
         except Exception as exc:
             err_txt = str(exc).upper()
             if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
@@ -439,14 +449,12 @@ def synthesize_elder_voice(
         return cached
 
     try:
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            mp3_bytes = pool.submit(
-                lambda: asyncio.run(
-                    asyncio.wait_for(_edge_tts_bytes(text, voice, TTS_RATE, TTS_PITCH), timeout=4.0)
-                )
-            ).result(timeout=4.5)
+        mp3_bytes = _run_with_hard_timeout(
+            lambda: asyncio.run(
+                asyncio.wait_for(_edge_tts_bytes(text, voice, TTS_RATE, TTS_PITCH), timeout=4.0)
+            ),
+            4.5,
+        )
 
         if not mp3_bytes:
             return None

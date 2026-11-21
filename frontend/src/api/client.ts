@@ -67,7 +67,7 @@ export const api = {
       audio_data_uri: string | null;
     }>("/api/kiosk/consent-greeting", { method: "POST" }),
 
-  submitTurn: async (payload: {
+  submitTurn: (payload: {
     audio_base64?: string;
     audio_mime?: string;
     browser_transcript?: string;
@@ -77,22 +77,15 @@ export const api = {
     photo_filename?: string;
     current_photo_filename?: string;
     skip_tts?: boolean;
-  }) => {
-    const reqInit: RequestInit = {
-      method: "POST",
-      body: JSON.stringify(payload),
-    };
-    try {
-      return await requestJson<TurnResponse>("/api/turn", reqInit, 15000);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      // Automatic 1-time fast retry only on network/timeout errors (never on 4xx validation errors)
-      if (msg.includes("Tiempo de espera") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
-        return await requestJson<TurnResponse>("/api/turn", reqInit, 10000);
-      }
-      throw err;
-    }
-  },
+  }) =>
+    requestJson<TurnResponse>(
+      "/api/turn",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      15000
+    ),
 
   createReview: (payload: {
     reviewer_name: string;

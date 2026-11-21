@@ -637,7 +637,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                     Zero-Raw-Cloud Audio
                   </div>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    El audio se normaliza en RAM con ffmpeg y se descarta al instante. Los biomarcadores MATTR, pausas RMS (&gt;= 2.0s) y TF-IDF corren localmente.
+                    El audio se normaliza en RAM con ffmpeg y se descarta al instante. Los biomarcadores MATTR, pausas RMS (≥2.0 s) y TF-IDF corren localmente.
                   </p>
                 </div>
               </div>

@@ -335,7 +335,15 @@ class DatabaseManager:
         progressively without injecting Don Manuel's 21 seeded days.
         """
         days = self.get_longitudinal_days(profile_id)
-        mood_label = mood.replace("_", " ").capitalize()
+        mood_map = {
+            "tranquilo": "Tranquilo",
+            "alegre": "Alegre",
+            "nostalgico": "Nostálgico",
+            "frustrado": "Frustrado",
+            "crisis_desorientacion": "Crisis · desorientación",
+        }
+        mood_key = (mood or "tranquilo").strip().lower()
+        mood_label = mood_map.get(mood_key, mood.replace("_", " ").capitalize())
         now_iso = self._now_iso()
 
         if not days:

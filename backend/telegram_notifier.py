@@ -140,6 +140,7 @@ class TelegramNotifier:
         link_uuid: str,
         chat_id: str = "",
         link_record: Optional[Dict[str, Any]] = None,
+        caregiver_name: str = "",
     ) -> Dict[str, Any]:
         """Build Zero-BotFather deep link and QR code for /start <uuid>."""
         if self.bot_token and not self._cached_bot_username:
@@ -152,7 +153,9 @@ class TelegramNotifier:
         effective_chat = record_chat or chat_id or get_telegram_default_chat_id()
         status = (link_record or {}).get("status") or ("paired" if effective_chat else "pending")
         linked = status == "paired" or bool(effective_chat)
-        linked_user_name = _clean_tg_first_name((link_record or {}).get("telegram_first_name") or "") or "Familiar"
+        app_owner = caregiver_name.strip()
+        raw_tg_name = _clean_tg_first_name((link_record or {}).get("telegram_first_name") or "")
+        linked_user_name = app_owner or raw_tg_name or "Familiar"
         return {
             "bot_configured": bool(self.bot_token),
             "bot_username": username,
@@ -418,7 +421,15 @@ class TelegramNotifier:
 
         link = self.db.get_telegram_link_by_uuid(link_uuid)
         if link and link.get("status") == "paired" and link.get("chat_id"):
-            who = link.get("telegram_first_name") or "Familiar"
+            app_owner = ""
+            if storage is not None:
+                try:
+                    cfg = storage.load_account_config()
+                    if cfg.get("is_registered"):
+                        app_owner = str(cfg.get("caregiver_name") or "").strip()
+                except Exception:
+                    pass
+            who = app_owner or _clean_tg_first_name(str(link.get("telegram_first_name") or "")) or "Familiar"
             return {
                 "found": True,
                 "chat_id": link["chat_id"],
@@ -574,7 +585,7 @@ class TelegramNotifier:
         body = (
             f"Estado emocional: {format_emotion_es(emotional_state)}.\n"
             f"Resumen (Filtro de Privacidad): {topic_summary}\n"
-            f"Sugerencia para la cena: {dinner_tip}"
+            f"Sugerencia familiar: {dinner_tip}"
         )
         safe_name = html.escape(elder_name)
         safe_body = html.escape(body)
@@ -598,14 +609,18 @@ class TelegramNotifier:
     ) -> Dict[str, Any]:
         """Level 2 (Amber): Non-diagnostic longitudinal trend warning."""
         title = f"Nivel 2 · Aviso Preventivo de Tendencia ({elder_name})"
+        recent_mattr = float(evaluation.get("recent_mattr_mean", 0.0))
+        base_mattr = float(evaluation.get("baseline_mattr_mean", 0.0))
         mattr_pct = format_signed(evaluation.get("delta_mattr_pct_display", 0), 1)
         z_mattr = format_signed(evaluation.get("z_mattr", 0), 2)
+        recent_pause = float(evaluation.get("recent_pause_mean", 0.0))
+        base_pause = float(evaluation.get("baseline_pause_mean", 0.0))
         pause_pct = format_signed(evaluation.get("delta_pause_pct_display", 0), 1)
         z_pause = format_signed(evaluation.get("z_pause", 0), 2)
         body = (
             f"Se detectó una variación sostenida frente a la línea base personal (D1-D14): "
-            f"MATTR {mattr_pct}% (Z={z_mattr}), "
-            f"Pausas {pause_pct}% (Z={z_pause}).\n"
+            f"MATTR {mattr_pct}% ({recent_mattr:.3f} vs base {base_mattr:.3f}, Z={z_mattr}), "
+            f"Pausas {pause_pct}% ({recent_pause:.2f} s vs base {base_pause:.2f} s, Z={z_pause}).\n"
             "Aviso de apoyo clínico no diagnóstico: revisa variables de confusión (sueño, medicación, Sundowning) "
             "en Gobernanza RISE y comparte el PDF con su geriatra si persiste."
         )

@@ -8,6 +8,7 @@ import hmac
 import json
 import secrets
 import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,10 +38,14 @@ THEME_PALETTES: Dict[str, Tuple[Tuple[int, int, int], Tuple[int, int, int], Tupl
 }
 
 
+def generate_link_uuid() -> str:
+    """Generate a unique UUID v4 (36 chars, fits Telegram 64-char /start deep-link limit)."""
+    return str(uuid.uuid4())
+
+
 def generate_link_code() -> str:
-    """Generate a short human-friendly Telegram deep-link code like MV-4821."""
-    digits = "".join(str(secrets.randbelow(10)) for _ in range(4))
-    return f"MV-{digits}"
+    """Alias returning a full UUID v4 for backward compatibility."""
+    return generate_link_uuid()
 
 
 def hash_pin(pin: str, salt: Optional[str] = None) -> str:
@@ -138,6 +143,41 @@ class StorageManager:
         public = {k: v for k, v in cfg.items() if k != "pin_hash"}
         public["has_pin"] = bool(cfg.get("pin_hash"))
         return public
+
+    # ------------------------------------------------------------------
+    # Telegram UUID Link Management (per-profile isolation)
+    # ------------------------------------------------------------------
+    def ensure_telegram_link(self, profile_id: Optional[str] = None) -> Dict[str, Any]:
+        """Return active paired or pending UUID v4 link for profile_id, creating one if absent."""
+        cfg = self.load_account_config()
+        pid = profile_id or cfg.get("active_profile_id", "don_manuel")
+        link = self.db.get_active_telegram_link(pid)
+        if not link:
+            # Reuse existing UUID from account_config if it is already a valid UUID v4
+            candidate = str(cfg.get("telegram_link_code") or "").strip()
+            try:
+                parsed = uuid.UUID(candidate)
+                new_uuid = str(parsed) if parsed.version == 4 else generate_link_uuid()
+            except ValueError:
+                new_uuid = generate_link_uuid()
+            link = self.db.create_telegram_link(pid, new_uuid)
+            if pid == cfg.get("active_profile_id"):
+                cfg["telegram_link_code"] = link["link_uuid"]
+                self.save_account_config(cfg)
+        return link
+
+    def regenerate_telegram_link(self, profile_id: Optional[str] = None) -> Dict[str, Any]:
+        """Revoke existing Telegram links for profile_id and issue a fresh UUID v4 in pending state."""
+        cfg = self.load_account_config()
+        pid = profile_id or cfg.get("active_profile_id", "don_manuel")
+        self.db.revoke_profile_telegram_links(pid)
+        new_uuid = generate_link_uuid()
+        link = self.db.create_telegram_link(pid, new_uuid)
+        if pid == cfg.get("active_profile_id"):
+            cfg["telegram_link_code"] = new_uuid
+            cfg["telegram_chat_id"] = ""
+            self.save_account_config(cfg)
+        return link
 
     # ------------------------------------------------------------------
     # Profiles & Biographical RAG-Lite

@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Copy,
   Cpu,
   ExternalLink,
   HeartHandshake,
@@ -68,6 +69,53 @@ export const OnboardingWizard: React.FC<Props> = ({
   // Step 4 — Album upload state
   const [uploadTheme, setUploadTheme] = useState("familia_hogar");
   const [photos, setPhotos] = useState(state.photos);
+  const autoAdvancedRef = useRef(false);
+
+  // Automatic background polling (2.5s) on Step 2 to detect pending -> paired without clicking
+  useEffect(() => {
+    if (step !== 2 || state.telegram_status.linked) return;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await api.getTelegramStatus();
+        if (res.telegram_status.linked) {
+          const fresh = await api.getState();
+          onStateChange(fresh);
+          const who = res.telegram_status.linked_user_name || "tu celular";
+          notify(`¡Vinculación automática completada con ${who}!`, "success");
+          if (!autoAdvancedRef.current) {
+            autoAdvancedRef.current = true;
+            window.setTimeout(() => setStep(3), 1500);
+          }
+        }
+      } catch {
+        // silent poll retry
+      }
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [step, state.telegram_status.linked, onStateChange, notify]);
+
+  const handleRegenerateUuid = async () => {
+    setBusy(true);
+    try {
+      const res = await api.regenerateTelegramUuid();
+      onStateChange(res.state);
+      autoAdvancedRef.current = false;
+      notify("Se generó un nuevo UUID único y código QR.", "info");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Error al regenerar UUID.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopyDeepLink = async () => {
+    try {
+      await navigator.clipboard.writeText(state.telegram_status.deep_link);
+      notify("Enlace único de Telegram copiado al portapapeles.", "success");
+    } catch {
+      notify("No se pudo copiar automáticamente; abre el enlace directo.", "info");
+    }
+  };
 
   const loadDonManuelExample = () => {
     setNombreCompleto("Manuel González Magaña");
@@ -472,51 +520,84 @@ export const OnboardingWizard: React.FC<Props> = ({
                 <div className="flex flex-col items-center p-4 rounded-xl border bg-white text-slate-900" style={{ borderColor: "var(--border)" }}>
                   <img
                     src={state.telegram_status.qr_base64}
-                    alt="Código QR Telegram Deep-Link"
+                    alt="Código QR Telegram Deep-Link UUID"
                     className="w-44 h-44 object-contain"
                   />
-                  <span className="mt-2 text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-slate-100">
-                    /start {state.telegram_status.link_code}
+                  <span
+                    className="mt-2 text-[10px] font-mono font-semibold px-2 py-1 rounded-md bg-slate-100 max-w-full truncate"
+                    title={state.telegram_status.link_uuid}
+                  >
+                    UUID: {state.telegram_status.link_uuid}
                   </span>
                 </div>
 
                 <div className="space-y-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    <QrCode className="w-4 h-4" style={{ color: "var(--primary)" }} />
-                    <span className="font-medium">Bot: @{state.telegram_status.bot_username}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <QrCode className="w-4 h-4" style={{ color: "var(--primary)" }} />
+                      <span className="font-medium">Bot: @{state.telegram_status.bot_username}</span>
+                    </div>
+                    <span
+                      className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full"
+                      style={{
+                        backgroundColor: state.telegram_status.linked
+                          ? "var(--emerald-soft)"
+                          : "var(--amber-soft)",
+                        color: state.telegram_status.linked ? "var(--emerald)" : "var(--amber)",
+                      }}
+                    >
+                      {state.telegram_status.linked ? "Vinculado (paired)" : "Esperando QR (pending)"}
+                    </span>
                   </div>
                   <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                    Al vincularse, recibirás <strong>Nivel 1</strong> (Pulso diario con sugerencia para la cena), <strong>Nivel 2</strong> (Aviso preventivo de tendencia) y <strong>Nivel 3</strong> (Alerta Roja S.O.S.) sin exponer grabaciones ni transcripciones íntimas.
+                    Cada paciente recibe un <strong>UUID v4 irrepetible</strong>. Escanea el QR, pulsa <strong>Iniciar</strong> en Telegram y esta pantalla detectará tu celular automáticamente en segundos. También podrás enviar recados y fotos al marco digital.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <a
                       href={state.telegram_status.deep_link}
                       target="_blank"
                       rel="noreferrer"
-                      className="btn-secondary text-xs"
+                      className="btn-primary text-xs"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       Abrir en Telegram
                     </a>
                     <button
                       type="button"
+                      onClick={handleCopyDeepLink}
+                      className="btn-secondary text-xs"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Copiar enlace
+                    </button>
+                    <button
+                      type="button"
                       disabled={busy}
                       onClick={handleDiscoverTelegram}
-                      className="btn-primary text-xs"
+                      className="btn-secondary text-xs"
                     >
                       {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                      Detectar vinculación
+                      Verificar ahora
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleRegenerateUuid}
+                      className="btn-secondary text-xs"
+                    >
+                      Regenerar UUID
                     </button>
                   </div>
                   {state.telegram_status.linked ? (
                     <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "var(--emerald)" }}>
                       <CheckCircle2 className="w-4 h-4" />
-                      Vinculado correctamente (Chat ID {state.telegram_status.chat_id})
+                      Vinculado con {state.telegram_status.linked_user_name || "Familiar"} (Chat ID {state.telegram_status.chat_id})
                     </div>
                   ) : (
-                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                      Puedes continuar ahora y vincular tu celular más tarde desde el Panel Familiar.
-                    </p>
+                    <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Escuchando vinculación automática... (puedes continuar y vincular después)
+                    </div>
                   )}
                 </div>
               </div>

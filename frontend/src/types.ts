@@ -105,11 +105,27 @@ export interface AlbumPhoto {
 export interface TelegramStatus {
   bot_configured: boolean;
   bot_username: string;
+  link_uuid: string;
   link_code: string;
+  status: "pending" | "paired";
+  linked_user_name: string;
   deep_link: string;
   qr_base64: string;
   chat_id: string;
   linked: boolean;
+}
+
+export interface InboundFamilyMessage {
+  id: number;
+  created_at: string;
+  profile_id: string;
+  link_uuid: string;
+  sender_name: string;
+  message_type: "text" | "photo";
+  text_content: string;
+  photo_filename?: string | null;
+  audio_data_uri?: string | null;
+  delivered_to_kiosk: boolean;
 }
 
 export interface TelegramLog {

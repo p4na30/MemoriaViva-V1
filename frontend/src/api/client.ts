@@ -1,4 +1,4 @@
-import type { AppState, TurnResponse } from "../types";
+import type { AppState, InboundFamilyMessage, TelegramStatus, TurnResponse } from "../types";
 
 const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 
@@ -118,6 +118,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  getTelegramStatus: () =>
+    requestJson<{ ok: boolean; telegram_status: TelegramStatus }>("/api/telegram/status"),
+
+  regenerateTelegramUuid: () =>
+    requestJson<{ ok: boolean; telegram_status: TelegramStatus; state: AppState }>(
+      "/api/telegram/regenerate-uuid",
+      { method: "POST" }
+    ),
+
   verifyTelegram: () =>
     requestJson<{ ok: boolean; verification: Record<string, unknown> }>("/api/telegram/verify", {
       method: "POST",
@@ -128,6 +137,14 @@ export const api = {
       "/api/telegram/discover-chat",
       { method: "POST" }
     ),
+
+  getKioskInbound: () =>
+    requestJson<{ ok: boolean; messages: InboundFamilyMessage[] }>("/api/kiosk/inbound"),
+
+  ackKioskInbound: (msgId: number) =>
+    requestJson<{ ok: boolean; acked_id: number }>(`/api/kiosk/inbound/${msgId}/ack`, {
+      method: "POST",
+    }),
 
   sendLevel2Warning: () =>
     requestJson<{ ok: boolean; state: AppState }>("/api/telegram/level2-warning", {

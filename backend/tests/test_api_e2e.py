@@ -189,3 +189,125 @@ def test_manual_onboarding_profile_isolation_and_jpg_upload(tmp_path: Path, monk
     assert r_up.json()["photo"]["filename"].endswith(".jpg")
     r_serve = client.get(r_up.json()["photo"]["url"])
     assert r_serve.status_code == 200
+
+
+def test_telegram_uuid_multiuser_isolation_and_bidirectional_kiosk(tmp_path: Path, monkeypatch) -> None:
+    """Verify UUID v4 pending->paired isolation across users and bidirectional Telegram->Kiosk text+photo."""
+    import io
+    import uuid
+    from PIL import Image
+
+    monkeypatch.setenv("MV_DISABLE_TG_POLLING", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    db = DatabaseManager(db_path=tmp_path / "tg_uuid.db", cloud_sync=False)
+    storage = StorageManager(db=db, data_dir=tmp_path)
+    tg = TelegramNotifier(db=db)
+    app = create_app(db_manager=db, storage_manager=storage, telegram_notifier=tg)
+    client = TestClient(app)
+
+    # 1. Initial UUID v4 must be valid and pending
+    r_st = client.get("/api/telegram/status")
+    assert r_st.status_code == 200
+    tg_st = r_st.json()["telegram_status"]
+    link_uuid = tg_st["link_uuid"]
+    assert uuid.UUID(link_uuid).version == 4
+    assert tg_st["status"] == "pending"
+    assert f"start={link_uuid}" in tg_st["deep_link"]
+
+    # 2. Wrong UUID or empty /start MUST NOT pair Don Manuel
+    r_bad1 = client.post(
+        "/api/telegram/webhook",
+        json={"message": {"chat": {"id": 77777}, "from": {"first_name": "Intruso"}, "text": "/start"}},
+    )
+    assert r_bad1.json()["handled"] is False
+    r_bad2 = client.post(
+        "/api/telegram/webhook",
+        json={"message": {"chat": {"id": 77777}, "from": {"first_name": "Intruso"}, "text": f"/start {uuid.uuid4()}"}},
+    )
+    assert r_bad2.json()["handled"] is False
+    assert client.get("/api/telegram/status").json()["telegram_status"]["status"] == "pending"
+
+    # 3. Exact /start <uuid> pairs cleanly (pending -> paired)
+    r_pair = client.post(
+        "/api/telegram/webhook",
+        json={
+            "message": {
+                "chat": {"id": 55501},
+                "from": {"first_name": "Sofía", "username": "sofia_g"},
+                "text": f"/start {link_uuid}",
+            }
+        },
+    )
+    assert r_pair.status_code == 200
+    assert r_pair.json()["action"] == "paired"
+    st_after = client.get("/api/telegram/status").json()["telegram_status"]
+    assert st_after["status"] == "paired"
+    assert st_after["chat_id"] == "55501"
+    assert st_after["linked_user_name"] == "Sofía"
+
+    # 4. Multi-user isolation: second patient gets distinct UUID and distinct chat_id
+    other_uuid = str(uuid.uuid4())
+    db.create_telegram_link("dona_elena", other_uuid)
+    db.pair_telegram_link(other_uuid, "88802", first_name="Carlos")
+    assert db.get_paired_links_by_chat_id("55501")[0]["profile_id"] == "don_manuel"
+    assert db.get_paired_links_by_chat_id("88802")[0]["profile_id"] == "dona_elena"
+
+    # 5. Bidirectional Bridge: authorized chat sends text -> appears in /api/kiosk/inbound
+    r_txt = client.post(
+        "/api/telegram/webhook",
+        json={
+            "message": {
+                "chat": {"id": 55501},
+                "from": {"first_name": "Sofía"},
+                "text": "Hola abuelito, te llevo pan dulce a las 7.",
+            }
+        },
+    )
+    assert r_txt.json()["action"] == "inbound_text"
+
+    # Unauthorized chat is ignored
+    r_unauth = client.post(
+        "/api/telegram/webhook",
+        json={"message": {"chat": {"id": 99999}, "from": {"first_name": "Desconocido"}, "text": "Hola"}},
+    )
+    assert r_unauth.json()["action"] == "unauthorized_chat_ignored"
+
+    # Authorized chat sends photo -> saved to album & queued for Kiosk
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 80), color=(40, 120, 150)).save(buf, format="JPEG")
+    res_photo = tg.process_incoming_update(
+        {
+            "message": {
+                "chat": {"id": 55501},
+                "from": {"first_name": "Sofía"},
+                "caption": "Mira el pastel que hicimos",
+                "photo": [{"file_id": "fake_id", "_test_bytes": buf.getvalue()}],
+            }
+        },
+        storage=storage,
+        tts_enabled=False,
+    )
+    assert res_photo["action"] == "inbound_photo"
+    assert res_photo["photo"]["filename"].endswith(".jpg")
+
+    r_inb = client.get("/api/kiosk/inbound")
+    msgs = r_inb.json()["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["message_type"] == "text"
+    assert "pan dulce" in msgs[0]["text_content"]
+    assert msgs[1]["message_type"] == "photo"
+
+    # Ack both messages
+    for m in msgs:
+        assert client.post(f"/api/kiosk/inbound/{m['id']}/ack").status_code == 200
+    assert client.get("/api/kiosk/inbound").json()["messages"] == []
+
+    # 6. Regenerate UUID revokes old link and creates fresh pending UUID v4
+    r_regen = client.post("/api/telegram/regenerate-uuid")
+    assert r_regen.status_code == 200
+    new_st = r_regen.json()["telegram_status"]
+    assert new_st["link_uuid"] != link_uuid
+    assert uuid.UUID(new_st["link_uuid"]).version == 4
+    assert new_st["status"] == "pending"

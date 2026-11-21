@@ -137,6 +137,40 @@ export const CaregiverDashboard: React.FC<Props> = ({
     setAdminTgUser(state.telegram_status.bot_username || "");
   }, [state.telegram_status.bot_username]);
 
+  // Automatic background polling (3s) when viewing Configuración with pending Telegram UUID
+  useEffect(() => {
+    if (activeTab !== "configuracion" || state.telegram_status.linked) return;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await api.getTelegramStatus();
+        if (res.telegram_status.linked) {
+          const fresh = await api.getState();
+          onStateChange(fresh);
+          notify(
+            `¡Celular vinculado automáticamente (${res.telegram_status.linked_user_name || "Familiar"})!`,
+            "success"
+          );
+        }
+      } catch {
+        // silent retry
+      }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [activeTab, state.telegram_status.linked, onStateChange, notify]);
+
+  const handleRegenerateUuid = async () => {
+    setBusy(true);
+    try {
+      const res = await api.regenerateTelegramUuid();
+      onStateChange(res.state);
+      notify("UUID único regenerado. Escanea el nuevo QR para vincular.", "info");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Error al regenerar UUID.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Simulator tab state
   const [customText, setCustomText] = useState("");
   const [lastTurnResult, setLastTurnResult] = useState<TurnResponse | null>(null);
@@ -1052,19 +1086,36 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   alt="QR Telegram"
                   className="w-24 h-24 rounded-lg bg-white p-1.5 shrink-0"
                 />
-                <div className="space-y-2 text-xs">
-                  <p className="font-semibold text-sm">
-                    Telegram Deep-Link: {state.telegram_status.link_code}
+                <div className="space-y-2 text-xs min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-sm">Telegram Deep-Link (UUID v4)</p>
+                    <span
+                      className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{
+                        backgroundColor: state.telegram_status.linked
+                          ? "var(--emerald-soft)"
+                          : "var(--amber-soft)",
+                        color: state.telegram_status.linked ? "var(--emerald)" : "var(--amber)",
+                      }}
+                    >
+                      {state.telegram_status.linked ? "Paired" : "Pending"}
+                    </span>
+                  </div>
+                  <p className="font-mono text-[11px] truncate" title={state.telegram_status.link_uuid} style={{ color: "var(--text-muted)" }}>
+                    {state.telegram_status.link_uuid}
                   </p>
                   <p style={{ color: "var(--text-muted)" }}>
-                    Estado: {state.telegram_status.linked ? `Conectado (Chat ${state.telegram_status.chat_id})` : "Pendiente de vincular"}
+                    Estado:{" "}
+                    {state.telegram_status.linked
+                      ? `Vinculado con ${state.telegram_status.linked_user_name || "Familiar"} (Chat ${state.telegram_status.chat_id})`
+                      : "Escuchando vinculación automática..."}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <a
                       href={state.telegram_status.deep_link}
                       target="_blank"
                       rel="noreferrer"
-                      className="btn-secondary !py-1.5 !text-xs"
+                      className="btn-primary !py-1.5 !text-xs"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       Abrir Bot
@@ -1073,10 +1124,18 @@ export const CaregiverDashboard: React.FC<Props> = ({
                       type="button"
                       disabled={busy}
                       onClick={handleDiscoverTelegram}
-                      className="btn-primary !py-1.5 !text-xs"
+                      className="btn-secondary !py-1.5 !text-xs"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
-                      Detectar vinculación
+                      Verificar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleRegenerateUuid}
+                      className="btn-secondary !py-1.5 !text-xs"
+                    >
+                      Regenerar UUID
                     </button>
                   </div>
                 </div>

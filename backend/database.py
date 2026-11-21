@@ -182,6 +182,30 @@ class DatabaseManager:
                     delivered INTEGER NOT NULL DEFAULT 0,
                     channel_status TEXT NOT NULL DEFAULT 'local_preview'
                 );
+
+                CREATE TABLE IF NOT EXISTS telegram_links (
+                    link_uuid TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    chat_id TEXT NOT NULL DEFAULT '',
+                    telegram_first_name TEXT NOT NULL DEFAULT '',
+                    telegram_username TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    paired_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS family_inbound_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    link_uuid TEXT NOT NULL,
+                    sender_name TEXT NOT NULL,
+                    message_type TEXT NOT NULL DEFAULT 'text',
+                    text_content TEXT NOT NULL DEFAULT '',
+                    photo_filename TEXT,
+                    audio_data_uri TEXT,
+                    delivered_to_kiosk INTEGER NOT NULL DEFAULT 0
+                );
                 """
             )
             # Auto-migrate legacy single-PK photo_metadata table to composite (profile_id, filename)
@@ -656,6 +680,177 @@ class DatabaseManager:
             return results
 
     # ------------------------------------------------------------------
+    # Telegram UUID Deep-Linking (Multi-User Isolation)
+    # ------------------------------------------------------------------
+    def create_telegram_link(self, profile_id: str, link_uuid: str) -> Dict[str, Any]:
+        created_at = self._now_iso()
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO telegram_links (
+                    link_uuid, profile_id, status, chat_id,
+                    telegram_first_name, telegram_username, created_at, paired_at
+                ) VALUES (?, ?, 'pending', '', '', '', ?, NULL)
+                """,
+                (link_uuid, profile_id, created_at),
+            )
+        return self.get_telegram_link_by_uuid(link_uuid) or {}
+
+    def get_telegram_link_by_uuid(self, link_uuid: str) -> Optional[Dict[str, Any]]:
+        clean = str(link_uuid or "").strip().lower()
+        if not clean:
+            return None
+        with self._connection(write=False) as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_links WHERE LOWER(link_uuid) = ?",
+                (clean,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_active_telegram_link(self, profile_id: str = "don_manuel") -> Optional[Dict[str, Any]]:
+        """Return latest paired link if one exists, otherwise latest pending link."""
+        with self._connection(write=False) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM telegram_links
+                WHERE profile_id = ? AND status IN ('paired', 'pending')
+                ORDER BY CASE WHEN status = 'paired' THEN 0 ELSE 1 END, created_at DESC
+                LIMIT 1
+                """,
+                (profile_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_paired_links_by_chat_id(self, chat_id: str) -> List[Dict[str, Any]]:
+        clean_chat = str(chat_id or "").strip()
+        if not clean_chat:
+            return []
+        with self._connection(write=False) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM telegram_links
+                WHERE chat_id = ? AND status = 'paired'
+                ORDER BY paired_at DESC
+                """,
+                (clean_chat,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def pair_telegram_link(
+        self,
+        link_uuid: str,
+        chat_id: str,
+        first_name: str = "",
+        username: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        existing = self.get_telegram_link_by_uuid(link_uuid)
+        if not existing or existing.get("status") == "revoked":
+            return None
+        paired_at = self._now_iso()
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_links
+                SET status = 'paired', chat_id = ?, telegram_first_name = ?,
+                    telegram_username = ?, paired_at = ?
+                WHERE LOWER(link_uuid) = ?
+                """,
+                (
+                    str(chat_id).strip(),
+                    first_name.strip() or "Familiar",
+                    username.strip().lstrip("@"),
+                    paired_at,
+                    link_uuid.strip().lower(),
+                ),
+            )
+        return self.get_telegram_link_by_uuid(link_uuid)
+
+    def revoke_profile_telegram_links(self, profile_id: str) -> None:
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_links
+                SET status = 'revoked'
+                WHERE profile_id = ? AND status IN ('pending', 'paired')
+                """,
+                (profile_id,),
+            )
+
+    # ------------------------------------------------------------------
+    # Bidirectional Family Inbound Messages (Telegram -> Elder Kiosk)
+    # ------------------------------------------------------------------
+    def insert_inbound_family_message(
+        self,
+        profile_id: str,
+        link_uuid: str,
+        sender_name: str,
+        message_type: str,
+        text_content: str = "",
+        photo_filename: Optional[str] = None,
+        audio_data_uri: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        created_at = self._now_iso()
+        with self._connection(write=True) as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO family_inbound_messages (
+                    created_at, profile_id, link_uuid, sender_name,
+                    message_type, text_content, photo_filename, audio_data_uri, delivered_to_kiosk
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    created_at,
+                    profile_id,
+                    link_uuid,
+                    sender_name.strip() or "Familiar",
+                    message_type,
+                    text_content.strip(),
+                    photo_filename,
+                    audio_data_uri,
+                ),
+            )
+            msg_id = int(cur.lastrowid)
+        return {
+            "id": msg_id,
+            "created_at": created_at,
+            "profile_id": profile_id,
+            "link_uuid": link_uuid,
+            "sender_name": sender_name.strip() or "Familiar",
+            "message_type": message_type,
+            "text_content": text_content.strip(),
+            "photo_filename": photo_filename,
+            "audio_data_uri": audio_data_uri,
+            "delivered_to_kiosk": False,
+        }
+
+    def get_pending_inbound_messages(
+        self, profile_id: str = "don_manuel", limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        with self._connection(write=False) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM family_inbound_messages
+                WHERE profile_id = ? AND delivered_to_kiosk = 0
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (profile_id, limit),
+            ).fetchall()
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                item = dict(r)
+                item["delivered_to_kiosk"] = bool(item["delivered_to_kiosk"])
+                out.append(item)
+            return out
+
+    def ack_inbound_message(self, msg_id: int) -> None:
+        with self._connection(write=True) as conn:
+            conn.execute(
+                "UPDATE family_inbound_messages SET delivered_to_kiosk = 1 WHERE id = ?",
+                (int(msg_id),),
+            )
+
+    # ------------------------------------------------------------------
     # Demo Pitch Reset Helper
     # ------------------------------------------------------------------
     def reset_demo_state(self, profile_id: str = "don_manuel") -> None:
@@ -664,4 +859,5 @@ class DatabaseManager:
             conn.execute("DELETE FROM conversation_turns WHERE profile_id = ?", (profile_id,))
             conn.execute("DELETE FROM clinical_reviews WHERE profile_id = ?", (profile_id,))
             conn.execute("DELETE FROM telegram_logs WHERE profile_id = ?", (profile_id,))
+            conn.execute("DELETE FROM family_inbound_messages WHERE profile_id = ?", (profile_id,))
         self.seed_longitudinal_days(profile_id=profile_id, force=True)

@@ -1,5 +1,6 @@
-"""Telegram Family Bridge with Zero-BotFather Deep-Linking (/start MV-XXXX),
-QR generation, on-demand /getUpdates discovery, optional webhook handling,
+"""Telegram Family Bridge with Zero-BotFather UUID v4 Deep-Linking (/start <uuid>),
+automatic background long-polling listener + unified webhook handler,
+Bidirectional Family -> Kiosk bridge (text read aloud via Edge-TTS + live photos),
 and 3-Level Triage Alerts enforcing the Abstract Summary Filter.
 """
 
@@ -8,12 +9,15 @@ from __future__ import annotations
 import base64
 import html
 import io
+import os
 import threading
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 import qrcode
 import requests
 
+from backend.audio_engine import synthesize_elder_voice
 from backend.config import (
     get_telegram_bot_token,
     get_telegram_bot_username,
@@ -31,11 +35,14 @@ def format_signed(value: Any, decimals: int = 1) -> str:
 
 
 class TelegramNotifier:
-    """Handles Telegram deep-linking and non-intrusive 3-level clinical triage alerts."""
+    """Handles UUID v4 deep-linking, bidirectional family messages, and 3-level clinical triage."""
 
     def __init__(self, db: Optional[DatabaseManager] = None) -> None:
         self.db = db or DatabaseManager()
         self._cached_bot_username: str = get_telegram_bot_username()
+        self._last_update_id: int = 0
+        self._poll_stop_event = threading.Event()
+        self._poll_thread: Optional[threading.Thread] = None
 
     @property
     def bot_token(self) -> str:
@@ -43,6 +50,9 @@ class TelegramNotifier:
 
     def _api_url(self, method: str) -> str:
         return f"https://api.telegram.org/bot{self.bot_token}/{method}"
+
+    def _file_url(self, file_path: str) -> str:
+        return f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
 
     @staticmethod
     def generate_qr_base64(url: str) -> str:
@@ -91,23 +101,243 @@ class TelegramNotifier:
                 "detail": str(exc),
             }
 
-    def get_deep_link_info(self, link_code: str, chat_id: str = "") -> Dict[str, Any]:
-        """Build Zero-BotFather deep link and QR code for /start MV-XXXX."""
+    def get_deep_link_info(
+        self,
+        link_uuid: str,
+        chat_id: str = "",
+        link_record: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build Zero-BotFather deep link and QR code for /start <uuid>."""
+        if self.bot_token and not self._cached_bot_username:
+            # Resolve real bot username lazily once when token is available
+            self.verify_bot()
         username = self._cached_bot_username or get_telegram_bot_username() or "MemoriaVivaRISEBot"
-        deep_link = f"https://t.me/{username}?start={link_code}"
-        effective_chat = chat_id or get_telegram_default_chat_id()
+        clean_uuid = (link_record or {}).get("link_uuid") or link_uuid
+        deep_link = f"https://t.me/{username}?start={clean_uuid}"
+        record_chat = (link_record or {}).get("chat_id") or ""
+        effective_chat = record_chat or chat_id or get_telegram_default_chat_id()
+        status = (link_record or {}).get("status") or ("paired" if effective_chat else "pending")
+        linked = status == "paired" or bool(effective_chat)
+        linked_user_name = (link_record or {}).get("telegram_first_name") or ""
         return {
             "bot_configured": bool(self.bot_token),
             "bot_username": username,
-            "link_code": link_code,
+            "link_uuid": clean_uuid,
+            "link_code": clean_uuid,
+            "status": "paired" if linked else "pending",
+            "linked_user_name": linked_user_name,
             "deep_link": deep_link,
             "qr_base64": self.generate_qr_base64(deep_link),
             "chat_id": effective_chat,
-            "linked": bool(effective_chat),
+            "linked": linked,
         }
 
-    def discover_chat_id(self, link_code: str) -> Dict[str, Any]:
-        """Poll /getUpdates on demand to match `/start MV-XXXX` and auto-bind caregiver chat_id."""
+    def _download_telegram_photo_bytes(self, file_id: str) -> Optional[bytes]:
+        """Download highest-resolution Telegram photo bytes via getFile."""
+        if not self.bot_token or not file_id:
+            return None
+        try:
+            r_meta = requests.get(self._api_url("getFile"), params={"file_id": file_id}, timeout=8)
+            meta = r_meta.json()
+            if not r_meta.ok or not meta.get("ok"):
+                return None
+            file_path = meta["result"].get("file_path")
+            if not file_path:
+                return None
+            r_bin = requests.get(self._file_url(file_path), timeout=12)
+            return r_bin.content if r_bin.ok and r_bin.content else None
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Unified Incoming Update Processor (Polling Listener + Webhook)
+    # ------------------------------------------------------------------
+    def process_incoming_update(
+        self,
+        update: Dict[str, Any],
+        storage: Any,
+        tts_enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """Process a single Telegram update:
+        1. Strict UUID v4 /start <uuid> pairing (pending -> paired, zero cross-user hijacking).
+        2. Bidirectional inbound text or photo from authorized paired chat_id -> Elder Kiosk.
+        """
+        msg = update.get("message") or update.get("edited_message") or {}
+        if not msg:
+            return {"handled": False, "action": "ignored_non_message"}
+
+        chat = msg.get("chat") or {}
+        chat_id = str(chat.get("id") or "").strip()
+        if not chat_id:
+            return {"handled": False, "action": "missing_chat_id"}
+
+        from_user = msg.get("from") or {}
+        first_name = str(from_user.get("first_name") or chat.get("first_name") or "Familiar").strip()
+        username = str(from_user.get("username") or chat.get("username") or "").strip()
+        text = str(msg.get("text") or "").strip()
+        caption = str(msg.get("caption") or "").strip()
+
+        # Case 1: Deep-Link Pairing `/start <uuid>`
+        if text.startswith("/start"):
+            parts = text.split(maxsplit=1)
+            payload_uuid = parts[1].strip() if len(parts) == 2 else ""
+            if not payload_uuid:
+                self._send_raw_message(
+                    chat_id,
+                    "Para vincular tu celular de forma segura, escanea el código QR dentro de MemoriaViva RISE y pulsa Iniciar.",
+                )
+                return {"handled": False, "action": "start_without_uuid"}
+
+            paired = self.db.pair_telegram_link(
+                link_uuid=payload_uuid,
+                chat_id=chat_id,
+                first_name=first_name,
+                username=username,
+            )
+            if not paired:
+                self._send_raw_message(
+                    chat_id,
+                    "Ese enlace de vinculación no es válido o ya expiró. Genera un nuevo código QR en MemoriaViva RISE.",
+                )
+                return {"handled": False, "action": "invalid_or_revoked_uuid", "uuid": payload_uuid}
+
+            pid = paired["profile_id"]
+            profile = storage.load_profile(pid)
+            elder_name = profile.get("paciente", {}).get("nombre_preferido", "su familiar")
+            profile.setdefault("contacto_emergencia_telegram", {})["chat_id"] = chat_id
+            storage.save_profile(profile, pid)
+
+            cfg = storage.load_account_config()
+            if cfg.get("active_profile_id") == pid:
+                cfg["telegram_chat_id"] = chat_id
+                cfg["telegram_link_code"] = paired["link_uuid"]
+                storage.save_account_config(cfg)
+
+            safe_first = html.escape(first_name)
+            safe_elder = html.escape(elder_name)
+            self._send_raw_message(
+                chat_id,
+                f"<b>¡Hola {safe_first}!</b> Tu celular ha quedado vinculado con la estación de <b>{safe_elder}</b>.\n"
+                "Aquí recibirás resúmenes breves y también puedes enviar recados o fotografías que aparecerán en su marco digital.",
+            )
+            self.db.insert_telegram_log(
+                profile_id=pid,
+                level=1,
+                title=f"Celular vinculado: {first_name}",
+                message=f"Emparejamiento automático exitoso por UUID ({paired['link_uuid'][:8]}...).",
+                delivered=True,
+                channel_status="delivered_telegram",
+            )
+            return {
+                "handled": True,
+                "action": "paired",
+                "profile_id": pid,
+                "link_uuid": paired["link_uuid"],
+                "chat_id": chat_id,
+                "first_name": first_name,
+            }
+
+        # Case 2: Bidirectional Family -> Elder Kiosk (only authorized paired chat_ids)
+        paired_links = self.db.get_paired_links_by_chat_id(chat_id)
+        if not paired_links:
+            return {"handled": False, "action": "unauthorized_chat_ignored"}
+
+        link = paired_links[0]
+        pid = link["profile_id"]
+        sender = link.get("telegram_first_name") or first_name
+        profile = storage.load_profile(pid)
+        elder_name = profile.get("paciente", {}).get("nombre_preferido", "Don Manuel")
+        cfg = storage.load_account_config()
+        voice_gender = cfg.get("voice_gender", "male")
+
+        # Subcase 2A: Family sent a Photo
+        photos = msg.get("photo")
+        if isinstance(photos, list) and len(photos) > 0:
+            best_photo = photos[-1]
+            raw_bytes = best_photo.get("_test_bytes") or self._download_telegram_photo_bytes(
+                str(best_photo.get("file_id") or "")
+            )
+            if raw_bytes:
+                photo_title = f"Foto enviada por {sender}"
+                photo_caption = caption or f"Recuerdo recién compartido por {sender} desde Telegram."
+                saved = storage.save_uploaded_photo(
+                    original_filename=f"telegram_{sender}.jpg",
+                    raw_bytes=raw_bytes,
+                    profile_id=pid,
+                    title=photo_title,
+                    caption=photo_caption,
+                    theme="familia_hogar",
+                )
+                spoken_text = (
+                    f"{elder_name}, {sender} le acaba de enviar una nueva foto familiar. "
+                    + (f"Dice: {caption}" if caption else "Mire qué bonito recuerdo llegó a su marco.")
+                )
+                audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
+                inbound = self.db.insert_inbound_family_message(
+                    profile_id=pid,
+                    link_uuid=link["link_uuid"],
+                    sender_name=sender,
+                    message_type="photo",
+                    text_content=spoken_text,
+                    photo_filename=saved["filename"],
+                    audio_data_uri=audio_uri,
+                )
+                self.db.insert_telegram_log(
+                    profile_id=pid,
+                    level=1,
+                    title=f"Foto recibida de {sender} -> Kiosco",
+                    message=photo_caption,
+                    delivered=True,
+                    channel_status="delivered_telegram",
+                )
+                self._send_raw_message(
+                    chat_id,
+                    f"Fotografía agregada al álbum y enviada al marco digital de <b>{html.escape(elder_name)}</b>.",
+                )
+                return {
+                    "handled": True,
+                    "action": "inbound_photo",
+                    "profile_id": pid,
+                    "inbound_message": inbound,
+                    "photo": saved,
+                }
+
+        # Subcase 2B: Family sent a Text Message
+        if text:
+            spoken_text = f"Recado cariñoso de {sender}: {text}"
+            audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
+            inbound = self.db.insert_inbound_family_message(
+                profile_id=pid,
+                link_uuid=link["link_uuid"],
+                sender_name=sender,
+                message_type="text",
+                text_content=spoken_text,
+                photo_filename=None,
+                audio_data_uri=audio_uri,
+            )
+            self.db.insert_telegram_log(
+                profile_id=pid,
+                level=1,
+                title=f"Recado de {sender} -> Kiosco",
+                message=text,
+                delivered=True,
+                channel_status="delivered_telegram",
+            )
+            self._send_raw_message(
+                chat_id,
+                f"Recado enviado a la pantalla de <b>{html.escape(elder_name)}</b> para leerse en voz alta.",
+            )
+            return {
+                "handled": True,
+                "action": "inbound_text",
+                "profile_id": pid,
+                "inbound_message": inbound,
+            }
+
+        return {"handled": False, "action": "unsupported_message_type"}
+
+    def discover_chat_id(self, link_uuid: str, storage: Any = None) -> Dict[str, Any]:
+        """Poll /getUpdates on demand with STRICT UUID v4 matching (never hijacks unrelated users)."""
         if not self.bot_token:
             return {
                 "found": False,
@@ -115,7 +345,10 @@ class TelegramNotifier:
                 "detail": "Configura TELEGRAM_BOT_TOKEN en .env o en Configuración Avanzada para vincular un celular real.",
             }
         try:
-            resp = requests.get(self._api_url("getUpdates"), params={"limit": 30}, timeout=8)
+            params: Dict[str, Any] = {"limit": 30}
+            if self._last_update_id > 0:
+                params["offset"] = self._last_update_id + 1
+            resp = requests.get(self._api_url("getUpdates"), params=params, timeout=8)
             data = resp.json()
             if not resp.ok or not data.get("ok"):
                 return {
@@ -125,61 +358,84 @@ class TelegramNotifier:
                 }
 
             updates = data.get("result") or []
-            matched_chat: Optional[str] = None
-            matched_user: str = ""
+            for upd in updates:
+                uid = int(upd.get("update_id", 0))
+                if uid > self._last_update_id:
+                    self._last_update_id = uid
+                if storage is not None:
+                    self.process_incoming_update(upd, storage=storage)
 
-            # 1. Exact deep-link match `/start MV-XXXX`
-            for upd in reversed(updates):
-                msg = upd.get("message") or upd.get("edited_message") or {}
-                text = str(msg.get("text") or "").strip()
-                chat = msg.get("chat") or {}
-                if link_code.lower() in text.lower() and chat.get("id"):
-                    matched_chat = str(chat["id"])
-                    matched_user = chat.get("first_name") or chat.get("username") or "Familiar"
-                    break
-
-            # 2. Fallback to most recent /start message if user tapped Iniciar without param
-            if not matched_chat:
-                for upd in reversed(updates):
-                    msg = upd.get("message") or {}
-                    chat = msg.get("chat") or {}
-                    if chat.get("id"):
-                        matched_chat = str(chat["id"])
-                        matched_user = chat.get("first_name") or chat.get("username") or "Familiar"
-                        break
-
-            if matched_chat:
-                self._send_raw_message(
-                    matched_chat,
-                    f"MemoriaViva RISE vinculado correctamente ({link_code}). "
-                    "Recibirás resúmenes breves y avisos respetando la privacidad de tu familiar.",
-                )
+            link = self.db.get_telegram_link_by_uuid(link_uuid)
+            if link and link.get("status") == "paired" and link.get("chat_id"):
+                who = link.get("telegram_first_name") or "Familiar"
                 return {
                     "found": True,
-                    "chat_id": matched_chat,
-                    "user_label": matched_user,
-                    "detail": f"Vinculado automáticamente con {matched_user} (Chat ID {matched_chat}).",
+                    "chat_id": link["chat_id"],
+                    "user_label": who,
+                    "detail": f"Vinculado automáticamente con {who} (UUID {link_uuid[:8]}...).",
                 }
             return {
                 "found": False,
                 "chat_id": "",
-                "detail": "Aún no recibimos tu mensaje /start. Escanea el QR, pulsa Iniciar en Telegram y vuelve a intentar.",
+                "detail": "Esperando escaneo del QR único. Abre el enlace en Telegram y pulsa Iniciar.",
             }
         except Exception as exc:
             return {"found": False, "chat_id": "", "detail": f"Error de red: {exc}"}
 
-    def extract_chat_from_webhook(self, payload: Dict[str, Any]) -> Dict[str, str]:
-        """Parse an incoming Telegram webhook update for `/start MV-XXXX` deep-link binding."""
-        msg = payload.get("message") or {}
-        text = str(msg.get("text") or "").strip()
-        chat = msg.get("chat") or {}
-        chat_id = str(chat.get("id") or "")
-        code = ""
-        if text.startswith("/start"):
-            parts = text.split(maxsplit=1)
-            if len(parts) == 2:
-                code = parts[1].strip()
-        return {"chat_id": chat_id, "code": code, "first_name": str(chat.get("first_name") or "")}
+    # ------------------------------------------------------------------
+    # Background Long-Polling Listener Thread (Zero-Click Pairing + Inbound)
+    # ------------------------------------------------------------------
+    def start_background_polling(self, storage: Any) -> None:
+        """Start lightweight daemon thread polling getUpdates for automatic pairing & inbound bridge."""
+        if os.getenv("MV_DISABLE_TG_POLLING", "0") == "1":
+            return
+        if self._poll_thread and self._poll_thread.is_alive():
+            return
+        self._poll_stop_event.clear()
+
+        def _poll_loop() -> None:
+            while not self._poll_stop_event.is_set():
+                token = self.bot_token
+                if not token:
+                    self._poll_stop_event.wait(5.0)
+                    continue
+                try:
+                    params: Dict[str, Any] = {
+                        "timeout": 15,
+                        "limit": 20,
+                        "allowed_updates": '["message"]',
+                    }
+                    if self._last_update_id > 0:
+                        params["offset"] = self._last_update_id + 1
+                    resp = requests.get(self._api_url("getUpdates"), params=params, timeout=22)
+                    if resp.status_code == 409:
+                        # Webhook is configured on this bot; yield cleanly without spamming
+                        self._poll_stop_event.wait(30.0)
+                        continue
+                    data = resp.json()
+                    if resp.ok and data.get("ok"):
+                        for upd in data.get("result") or []:
+                            uid = int(upd.get("update_id", 0))
+                            if uid > self._last_update_id:
+                                self._last_update_id = uid
+                            try:
+                                self.process_incoming_update(upd, storage=storage)
+                            except Exception:
+                                pass
+                    else:
+                        self._poll_stop_event.wait(4.0)
+                except Exception:
+                    self._poll_stop_event.wait(4.0)
+
+        self._poll_thread = threading.Thread(
+            target=_poll_loop,
+            name="telegram-uuid-listener",
+            daemon=True,
+        )
+        self._poll_thread.start()
+
+    def stop_background_polling(self) -> None:
+        self._poll_stop_event.set()
 
     def _send_raw_message(self, chat_id: str, text: str) -> tuple[bool, str]:
         if not self.bot_token or not chat_id:
@@ -206,8 +462,10 @@ class TelegramNotifier:
         chat_id: str = "",
         sync: bool = False,
     ) -> Dict[str, Any]:
-        """Persist Telegram log immediately and dispatch HTTP POST asynchronously (non-blocking)."""
-        effective_chat = chat_id or get_telegram_default_chat_id()
+        """Persist Telegram log immediately and dispatch HTTP POST (sync for parallel Cloud Run turns)."""
+        link = self.db.get_active_telegram_link(profile_id)
+        linked_chat = link["chat_id"] if (link and link.get("status") == "paired") else ""
+        effective_chat = linked_chat or chat_id or get_telegram_default_chat_id()
         has_live_channel = bool(self.bot_token and effective_chat)
         initial_status = "queued_async" if has_live_channel else "local_preview"
 

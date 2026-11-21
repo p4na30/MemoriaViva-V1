@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -133,13 +134,23 @@ def create_app(
     storage = storage_manager or StorageManager(db=db)
     telegram = telegram_notifier or TelegramNotifier(db=db)
 
-    # Ensure 21-day baseline exists for Don Manuel on boot
+    # Ensure 21-day baseline and active UUID v4 Telegram link exist on boot
     db.seed_longitudinal_days("don_manuel")
+    storage.ensure_telegram_link("don_manuel")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        telegram.start_background_polling(storage)
+        try:
+            yield
+        finally:
+            telegram.stop_background_polling()
 
     app = FastAPI(
         title="MemoriaViva RISE API",
         version="3.0.0",
         description="Plataforma Conversacional de Terapia de Reminiscencia y Detección Temprana No Invasiva",
+        lifespan=lifespan,
     )
 
     app.add_middleware(
@@ -162,9 +173,11 @@ def create_app(
             days = db.seed_longitudinal_days(pid)
         evaluation = evaluate_longitudinal_trend(days)
         photos = storage.list_photos(pid)
+        tg_link = storage.ensure_telegram_link(pid)
         deep_link = telegram.get_deep_link_info(
-            link_code=account.get("telegram_link_code", "MV-1000"),
+            link_uuid=tg_link["link_uuid"],
             chat_id=account.get("telegram_chat_id", ""),
+            link_record=tg_link,
         )
         return {
             "account": account,
@@ -299,8 +312,10 @@ def create_app(
         cfg["kiosk_locked"] = bool(req.launch_kiosk)
         cfg["consent_caregiver_accepted"] = bool(req.consent_accepted)
         cfg["consent_caregiver_at"] = datetime.now(timezone.utc).isoformat()
-        if not cfg.get("telegram_link_code"):
-            cfg["telegram_link_code"] = generate_link_code()
+        tg_link = storage.ensure_telegram_link(pid)
+        cfg["telegram_link_code"] = tg_link["link_uuid"]
+        if tg_link.get("status") == "paired" and tg_link.get("chat_id"):
+            cfg["telegram_chat_id"] = tg_link["chat_id"]
         storage.save_account_config(cfg)
 
         # Guarantee at least 10 themed photos for the Kiosk
@@ -719,44 +734,70 @@ def create_app(
         return {"ok": True, "state": _build_full_state()}
 
     # ------------------------------------------------------------------
-    # Telegram Deep-Link, Webhook & Level 2 Preventive Warning
+    # Telegram UUID v4 Deep-Link, Status Polling, Webhook & Inbound Bridge
     # ------------------------------------------------------------------
+    @app.get("/api/telegram/status")
+    def telegram_status_poll() -> Dict[str, Any]:
+        """Lightweight polling endpoint (2.5s) for automatic pending -> paired detection in UI."""
+        pid = _active_profile_id()
+        cfg = storage.load_account_config()
+        tg_link = storage.ensure_telegram_link(pid)
+        deep = telegram.get_deep_link_info(
+            link_uuid=tg_link["link_uuid"],
+            chat_id=cfg.get("telegram_chat_id", ""),
+            link_record=tg_link,
+        )
+        return {"ok": True, "telegram_status": deep}
+
+    @app.post("/api/telegram/regenerate-uuid")
+    def telegram_regenerate_uuid() -> Dict[str, Any]:
+        """Revoke previous Telegram links for the active profile and issue a fresh UUID v4."""
+        pid = _active_profile_id()
+        new_link = storage.regenerate_telegram_link(pid)
+        deep = telegram.get_deep_link_info(
+            link_uuid=new_link["link_uuid"],
+            chat_id="",
+            link_record=new_link,
+        )
+        return {"ok": True, "telegram_status": deep, "state": _build_full_state()}
+
     @app.post("/api/telegram/verify")
     def telegram_verify() -> Dict[str, Any]:
         res = telegram.verify_bot()
+        pid = _active_profile_id()
         cfg = storage.load_account_config()
+        tg_link = storage.ensure_telegram_link(pid)
         deep = telegram.get_deep_link_info(
-            link_code=cfg.get("telegram_link_code", "MV-1000"),
+            link_uuid=tg_link["link_uuid"],
             chat_id=cfg.get("telegram_chat_id", ""),
+            link_record=tg_link,
         )
         return {"ok": True, "verification": res, "telegram_status": deep}
 
     @app.post("/api/telegram/discover-chat")
     def telegram_discover_chat() -> Dict[str, Any]:
-        cfg = storage.load_account_config()
-        code = cfg.get("telegram_link_code") or generate_link_code()
-        res = telegram.discover_chat_id(code)
-        if res.get("found") and res.get("chat_id"):
-            cfg["telegram_chat_id"] = res["chat_id"]
-            storage.save_account_config(cfg)
-            pid = cfg.get("active_profile_id", "don_manuel")
-            profile = storage.load_profile(pid)
-            profile.setdefault("contacto_emergencia_telegram", {})["chat_id"] = res["chat_id"]
-            storage.save_profile(profile, pid)
+        pid = _active_profile_id()
+        tg_link = storage.ensure_telegram_link(pid)
+        res = telegram.discover_chat_id(tg_link["link_uuid"], storage=storage)
         return {"ok": bool(res.get("found")), "result": res, "state": _build_full_state()}
 
     @app.post("/api/telegram/webhook")
     async def telegram_webhook(request: Request) -> Dict[str, Any]:
         payload = await request.json()
-        parsed = telegram.extract_chat_from_webhook(payload)
-        cfg = storage.load_account_config()
-        if parsed["chat_id"] and (
-            not parsed["code"] or parsed["code"].upper() == cfg.get("telegram_link_code", "").upper()
-        ):
-            cfg["telegram_chat_id"] = parsed["chat_id"]
-            storage.save_account_config(cfg)
-            return {"ok": True, "linked_chat_id": parsed["chat_id"]}
-        return {"ok": True, "ignored": True}
+        result = telegram.process_incoming_update(payload, storage=storage)
+        return {"ok": True, **result}
+
+    @app.get("/api/kiosk/inbound")
+    def kiosk_poll_inbound() -> Dict[str, Any]:
+        """Return unread bidirectional Telegram text/photo messages for the Elder Kiosk."""
+        pid = _active_profile_id()
+        messages = db.get_pending_inbound_messages(pid, limit=5)
+        return {"ok": True, "messages": messages}
+
+    @app.post("/api/kiosk/inbound/{msg_id}/ack")
+    def kiosk_ack_inbound(msg_id: int) -> Dict[str, Any]:
+        db.ack_inbound_message(msg_id)
+        return {"ok": True, "acked_id": msg_id}
 
     @app.post("/api/telegram/level2-warning")
     def telegram_level2_warning() -> Dict[str, Any]:
@@ -822,8 +863,8 @@ def create_app(
         cfg = storage.load_account_config()
         cfg["is_registered"] = False
         cfg["kiosk_locked"] = False
-        cfg["telegram_link_code"] = generate_link_code()
         storage.save_account_config(cfg)
+        storage.regenerate_telegram_link(pid)
         return {"ok": True, "state": _build_full_state()}
 
     # ------------------------------------------------------------------

@@ -80,6 +80,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
   );
   const [lastAudioUri, setLastAudioUri] = useState<string | null>(null);
   const [learnedChip, setLearnedChip] = useState<string | null>(null);
+  const [familyBanner, setFamilyBanner] = useState<string | null>(null);
   const [emergencyActive, setEmergencyActive] = useState(false);
 
   // PIN unlock modal
@@ -487,6 +488,38 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
 
   useEffect(() => () => cleanupCaptureResources(), [cleanupCaptureResources]);
 
+  // Bidirectional Family Bridge (Telegram -> Elder Kiosk): poll every 4s for inbound text/photos
+  useEffect(() => {
+    if (isListening || isProcessing || pinModalOpen) return;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await api.getKioskInbound();
+        if (!res.messages || res.messages.length === 0) return;
+        const msg = res.messages[0];
+        await api.ackKioskInbound(msg.id);
+
+        setReplyText(msg.text_content);
+        setLastAudioUri(msg.audio_data_uri || null);
+        setFamilyBanner(`Mensaje familiar de ${msg.sender_name} (Telegram)`);
+        setEmergencyActive(false);
+
+        if (msg.message_type === "photo" && msg.photo_filename) {
+          const fresh = await api.getState();
+          onStateChange(fresh);
+          const idx = fresh.photos.findIndex((p) => p.filename === msg.photo_filename);
+          if (idx >= 0) {
+            setPhotoIdx(idx);
+            setAnchoredBadge(`Foto nueva de ${msg.sender_name}`);
+          }
+        }
+        playAudioUri(msg.audio_data_uri);
+      } catch {
+        // silent poll retry
+      }
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [isListening, isProcessing, pinModalOpen, onStateChange, playAudioUri]);
+
   const handleUnlockPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pinInput.trim()) return;
@@ -647,6 +680,24 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
             <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-red-500/20 border border-red-400/40 text-red-100 text-xs sm:text-sm font-medium">
               <AlertTriangle className="w-4 h-4 shrink-0 text-red-300" />
               Protocolo de Validación de Naomi Feil activo · Aviso S.O.S. enviado a {state.account.caregiver_name}.
+            </div>
+          )}
+
+          {/* Bidirectional Family Inbound Message Banner */}
+          {familyBanner && !emergencyActive && (
+            <div className="flex items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-cyan-500/20 border border-cyan-300/35 text-cyan-100 text-xs sm:text-sm font-medium">
+              <span className="flex items-center gap-2">
+                <MessageCircleHeart className="w-4 h-4 shrink-0 text-cyan-300" />
+                {familyBanner}
+              </span>
+              <button
+                type="button"
+                onClick={() => setFamilyBanner(null)}
+                className="opacity-70 hover:opacity-100"
+                aria-label="Cerrar aviso familiar"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           )}
 

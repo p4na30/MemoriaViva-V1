@@ -222,17 +222,17 @@ def test_gemini_fallback_chain_and_thinking_budget_zero(monkeypatch) -> None:
     storage = StorageManager()
     profile = storage.load_demo_seed_profile()
 
-    # Turn 1: hits 404 on gemini-missing-404, marks it unavailable, succeeds on gemini-flash-latest
+    # Turn 1: hits 404 on gemini-missing-404, marks it unavailable, succeeds on gemini-3.5-flash-lite
     res1 = generate_companion_response("Me encantaban los trenes de Guadalajara.", profile, [], {"is_repetition": False})
-    assert res1["engine_used"] == "gemini-flash-latest"
+    assert res1["engine_used"] == "gemini-3.5-flash-lite"
     assert calls[0] == ("gemini-missing-404", 0)
-    assert calls[1] == ("gemini-flash-latest", 0)
+    assert calls[1] == ("gemini-3.5-flash-lite", 0)
 
     # Turn 2: circuit breaker skips gemini-missing-404 completely (0ms wasted)
     calls.clear()
     res2 = generate_companion_response("Recordé el reloj de jubilación.", profile, [], {"is_repetition": False})
-    assert res2["engine_used"] == "gemini-flash-latest"
-    assert [m for m, _ in calls] == ["gemini-flash-latest"]
+    assert res2["engine_used"] == "gemini-3.5-flash-lite"
+    assert [m for m, _ in calls] == ["gemini-3.5-flash-lite"]
 
     # Crisis guardrail: if Gemini slips a question in crisis, substitute clean Naomi Feil text
     class CrisisSlipModels:
@@ -385,5 +385,43 @@ def test_gemini_diagnostics_records_sanitized_error_without_leaking_key(monkeypa
     assert "403 PERMISSION_DENIED" in diag["last_error"]
     assert fake_secret not in diag["last_error"]
     assert "[REDACTED" in diag["last_error"]
+
+
+def test_geriatric_warmth_dignity_and_medical_safety_guardrail() -> None:
+    """Ensure accidental abrupt repetition callouts, shaming phrases, and medical advice are blocked."""
+    from backend.llm_companion import sanitize_geriatric_reply
+
+    storage = StorageManager()
+    profile = storage.load_demo_seed_profile()
+
+    # 1. Abrupt opening repetition callout ("¡Otra vez con ellos!") is stripped while keeping warm follow-up
+    raw_rep = (
+        "¡Otra vez con ellos! Me alegra mucho. Platíqueme, cuando los escucha, "
+        "¿qué instrumentos o qué voz es la que más le llega al corazón?"
+    )
+    sanitized_rep = sanitize_geriatric_reply(
+        raw_rep, "Me encantan los boleros de Los Panchos", profile, {"is_repetition": True}
+    )
+    assert "otra vez" not in sanitized_rep.lower()
+    assert "instrumentos" in sanitized_rep.lower()
+    assert len(sanitized_rep.split()) <= 35
+
+    # 2. Shaming/forgetfulness phrase triggers warm validated fallback
+    raw_shame = "¿No se acuerda de su hija?"
+    sanitized_shame = sanitize_geriatric_reply(
+        raw_shame, "Me habló mi hija maestra de Colima", profile, {"is_repetition": False}
+    )
+    assert "no se acuerda" not in sanitized_shame.lower()
+    assert len(sanitized_shame.split()) <= 35
+
+    # 3. Pharmacological dosing advice is strictly blocked and deferred to caregiver/doctor
+    raw_med = "Tómese dos pastillas de la presión ahorita para que se le baje."
+    sanitized_med = sanitize_geriatric_reply(
+        raw_med, "¿Me tomo doble pastilla?", profile, {"is_repetition": False}
+    )
+    assert "dos pastillas" not in sanitized_med.lower()
+    assert "laura" in sanitized_med.lower() or "médico" in sanitized_med.lower()
+    assert len(sanitized_med.split()) <= 35
+
 
 

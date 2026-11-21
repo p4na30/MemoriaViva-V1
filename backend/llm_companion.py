@@ -77,6 +77,71 @@ CRISIS_KEYWORDS = [
     "donde estoy",
 ]
 
+UNDIGNIFIED_REPLY_PATTERNS = [
+    r"\botra\s+vez\b",
+    r"\bde\s+nuevo\b",
+    r"\bnuevamente\b",
+    r"ya\s+me\s+(?:lo\s+)?(?:hab[ií]a|dijo|cont[oó])",
+    r"no\s+se\s+acuerda",
+    r"se\s+le\s+olvid[oó]",
+    r"lo\s+(?:est[aá]\s+)?repit",
+    r"como\s+ya\s+(?:dijimos|hablamos|me\s+cont)",
+    r"est[aá]\s+confundid[oa]",
+]
+
+UNSAFE_MEDICAL_REPLY_PATTERNS = [
+    r"t[oó]m(?:ese|e)\s+(?:otra|dos|doble|media|una)\s+(?:pastilla|dosis|c[aá]psula|tableta)",
+    r"duplique\s+la\s+dosis",
+    r"suspenda\s+(?:su|el)\s+medicamento",
+    r"(?:usted\s+)?tiene\s+(?:alzheimer|demencia|deterioro\s+cognitivo)",
+]
+
+
+def _contains_any_pattern(text: str, patterns: Sequence[str]) -> bool:
+    low = (text or "").lower()
+    return any(re.search(pat, low) for pat in patterns)
+
+
+def sanitize_geriatric_reply(
+    reply: str,
+    user_text: str,
+    profile: Dict[str, Any],
+    repetition_info: Dict[str, Any],
+    demo_scenario_id: Optional[str] = None,
+) -> str:
+    """Enforce gerontological warmth, dignity, and medical-safety guardrails on LLM text."""
+    clean = enforce_word_limit(reply)
+    paciente = profile.get("paciente", {})
+    red = profile.get("red_familiar_y_afectiva", {})
+    nombre = paciente.get("nombre_preferido", "Don Manuel")
+    cuidador = red.get("hija_mayor_cuidadora", {}).get("nombre") or profile.get(
+        "contacto_emergencia_telegram", {}
+    ).get("nombre", "Laura")
+
+    # 1. Hard block on pharmacological dosing or automated medical diagnosis
+    if _contains_any_pattern(clean, UNSAFE_MEDICAL_REPLY_PATTERNS):
+        return enforce_word_limit(
+            f"Con los medicamentos prefiero que estemos bien seguros, {nombre}. "
+            f"Mejor consúltelo ahorita con {cuidador} o su médico antes de cambiar cualquier toma."
+        )
+
+    # 2. Prevent abrupt/shaming repetition callouts (e.g. "¡Otra vez con ellos!", "¿No se acuerda?")
+    if _contains_any_pattern(clean, UNDIGNIFIED_REPLY_PATTERNS):
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean) if s.strip()]
+        kept = [s for s in sentences if not _contains_any_pattern(s, UNDIGNIFIED_REPLY_PATTERNS)]
+        rebuilt = " ".join(kept).strip()
+        if len(rebuilt.split()) >= 7:
+            return enforce_word_limit(rebuilt)
+        safe = _deterministic_fallback_reply(
+            user_text=user_text,
+            profile=profile,
+            repetition_info=repetition_info,
+            demo_scenario_id=demo_scenario_id,
+        )
+        return enforce_word_limit(safe["assistant_reply"])
+
+    return clean
+
 
 def enforce_word_limit(text: str, max_words: int = MAX_ASSISTANT_WORDS) -> str:
     """Guarantee geriatric brevity (<= 35 words) without cutting mid-word."""
@@ -126,8 +191,9 @@ def build_master_prompt(
     history_block = "\n".join(history_lines) if history_lines else "(Inicio de sesión)"
 
     rep_context = (
-        f"REPETICIÓN DETECTADA (similitud {repetition_info.get('max_similarity', 0)}): "
-        "Escucha con entusiasmo y pide un detalle sensorial nuevo."
+        "REPETICIÓN DETECTADA: Responde con entusiasmo genuino como si fuera la primera vez "
+        "y pide un detalle sensorial nuevo. PROHIBIDO decir 'otra vez', 'de nuevo', 'nuevamente' "
+        "o insinuar que ya lo había contado antes."
         if repetition_info.get("is_repetition")
         else "Sin repetición semántica en este turno."
     )
@@ -146,14 +212,14 @@ MENSAJE ACTUAL DE {nombre_preferido}:
 "{user_text}"
 
 REGLAS INQUEBRANTABLES DEL MARCO RISE PARA `assistant_reply`:
-1. REGLA PRIORITARIA DE CONVERSACIÓN REAL: Responde SIEMPRE de forma directa, específica y cálida a lo que {nombre_preferido} acaba de decir en su último mensaje. NO cambies de tema ni lances datos al azar de su perfil si no vienen al caso.
+1. TONO CÁLIDO Y CONVERSACIÓN REAL: Habla siempre de "usted" con ternura, respeto y paciencia (nunca seco, brusco, sarcástico ni clínico). Responde SIEMPRE de forma directa a lo que {nombre_preferido} acaba de decir sin cambiar de tema al azar.
 2. BREVEDAD Y CLARIDAD GERIÁTRICA: `assistant_reply` NUNCA debe superar las 35 palabras (máximo 2 o 3 oraciones cortas). Haz SIEMPRE UNA SOLA pregunta natural relacionada con lo que acaba de contar (salvo en crisis).
-3. RESCATE BIOGRÁFICO SIN EVIDENCIAR OLVIDOS: Si {nombre_preferido} titubea o no recuerda el nombre de un familiar, lugar o fecha que está en su perfil biográfico, proporciónaselo con cariño dentro de la frase. PROHIBIDO decir "¿No se acuerda?" o "Ya me lo había dicho".
-4. PACIENCIA INFINITA ANTE REPETICIONES: Si {nombre_preferido} cuenta la misma historia otra vez, escúchalo con entusiasmo y pídele un detalle sensorial nuevo.
-5. PROTOCOLO DE VALIDACIÓN DE FEIL (CRISIS O DESORIENTACIÓN): Si expresa miedo, llanto, angustia, dolor físico, mareo o dice que no sabe dónde está:
+3. RESCATE BIOGRÁFICO SIN EVIDENCIAR OLVIDOS: Si {nombre_preferido} titubea o no recuerda el nombre de un familiar, lugar o fecha que está en su perfil biográfico, proporciónaselo con cariño dentro de la frase. PROHIBIDO decir "¿No se acuerda?", "Se le olvidó" o "Ya me lo había dicho".
+4. PACIENCIA INFINITA ANTE REPETICIONES: Si {nombre_preferido} cuenta la misma historia otra vez, escúchalo con ilusión como si fuera la primera vez y pídele un detalle sensorial nuevo. PROHIBIDO decir "otra vez", "de nuevo" o insinuar que lo repitió.
+5. PROTOCOLO DE VALIDACIÓN DE FEIL (CRISIS O DESORIENTACIÓN) Y SEGURIDAD MÉDICA: Si expresa miedo, llanto, angustia, dolor físico, mareo o dice que no sabe dónde está:
    - SUSPENDE cualquier pregunta de memoria (0 signos de interrogación).
    - Valida su emoción con ternura, recuérdale que está seguro en su casa en {ciudad} y que su familiar {cuidador} ya fue avisado para llamarle.
-   - Prohibido dar consejos médicos o farmacológicos.
+   - PROHIBIDO emitir diagnósticos médicos o recomendar/ajustar medicamentos; ante preguntas de pastillas o dosis, deriva con cariño a {cuidador} o a su médico.
 6. RETROALIMENTACIÓN Y MEMORIA VIVA (`new_biographical_facts`): Extrae cualquier dato nuevo que {nombre_preferido} mencione en este turno como frases claras para guardarlas permanentemente en su perfil JSON.
 
 Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura exacta:
@@ -365,7 +431,12 @@ def _call_gemini_with_fallback(
             if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
                 mark_model_unavailable(model_name)
                 continue
-            # If a model rejects thinking_budget=0, retry once without thinking_config before advancing
+            # Immediately advance to next model on transient overload/quota errors (never re-enable thinking)
+            if any(code in err_txt for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "DEADLINE", "TIMEOUT")):
+                continue
+            # Only retry without thinking_config if the model explicitly rejected thinking_budget=0
+            if "THINKING" not in err_txt and "INVALID_ARGUMENT" not in err_txt and "400" not in err_txt:
+                continue
             try:
                 config_kwargs.pop("thinking_config", None)
                 response = client.models.generate_content(
@@ -412,8 +483,14 @@ def generate_companion_response(
             if raw_json:
                 parsed = CompanionStructuredOutput.model_validate_json(raw_json).model_dump()
 
-                # Enforce strict RISE guardrails on model output
-                parsed["assistant_reply"] = enforce_word_limit(parsed["assistant_reply"])
+                # Enforce strict RISE warmth, dignity & safety guardrails on model output
+                parsed["assistant_reply"] = sanitize_geriatric_reply(
+                    reply=parsed["assistant_reply"],
+                    user_text=user_text,
+                    profile=profile,
+                    repetition_info=repetition_info,
+                    demo_scenario_id=demo_scenario_id,
+                )
                 if parsed["memory_album_theme"] not in MEMORY_ALBUM_THEMES:
                     parsed["memory_album_theme"] = infer_visual_theme(user_text)
                 if is_obvious_crisis or parsed.get("emergency_triggered"):

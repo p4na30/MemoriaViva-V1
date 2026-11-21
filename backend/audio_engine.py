@@ -391,6 +391,10 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
                     if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
                         mark_model_unavailable(model_name)
                         continue
+                    if any(code in err_txt for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "DEADLINE", "TIMEOUT")):
+                        continue
+                    if "THINKING" not in err_txt and "INVALID_ARGUMENT" not in err_txt and "400" not in err_txt:
+                        continue
                     try:
                         response = client.models.generate_content(
                             model=model_name,

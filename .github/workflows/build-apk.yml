@@ -65,16 +65,21 @@ jobs:
           retention-days: 14
 
       - name: Decode Keystore and Build Signed Release APK (on version tags)
-        if: startsWith(github.ref, 'refs/tags/v') && secrets.ANDROID_KEYSTORE_BASE64 != ''
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: frontend/android
         env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_FILE: /tmp/memoriaviva-release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "${KEYSTORE_FILE}"
-          ./gradlew assembleRelease
+          if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_FILE}"
+            ./gradlew assembleRelease
+          else
+            echo "ANDROID_KEYSTORE_BASE64 not set; skipping signed release APK (debug APK will still be attached)."
+          fi
 
       - name: Publish GitHub Release (on version tags)
         if: startsWith(github.ref, 'refs/tags/v')

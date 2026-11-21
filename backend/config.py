@@ -69,6 +69,18 @@ TTS_VOICE_FEMALE: str = "es-MX-DaliaNeural"
 TTS_RATE: str = "-15%"
 TTS_PITCH: str = "-5Hz"
 
+# Application Mode: "demo" (Hackathon Don Manuel showcase) vs "production" (Clean zero-seed app)
+def get_app_mode() -> str:
+    """Return active runtime mode: 'demo' (default) or 'production'."""
+    raw = os.getenv("MV_APP_MODE", "demo").strip().lower()
+    return "production" if raw in ("production", "prod", "clean") else "demo"
+
+
+def is_production_mode() -> bool:
+    """True when running the clean user-ready build without Don Manuel demo data."""
+    return get_app_mode() == "production"
+
+
 # Timezone for clinical circadian classification (Sundowning) and PDF reports
 MV_TIMEZONE: str = os.getenv("MV_TIMEZONE", "America/Mexico_City")
 

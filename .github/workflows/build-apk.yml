@@ -8,7 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       server_url:
-        description: "HTTPS Cloud Run URL for VITE_API_URL (overrides vars.APP_SERVER_URL)"
+        description: "HTTPS Cloud Run URL for Demo APK (overrides vars.APP_SERVER_URL)"
+        required: false
+        default: ""
+      clean_server_url:
+        description: "HTTPS Cloud Run URL for Clean Production APK (overrides vars.APP_CLEAN_SERVER_URL)"
         required: false
         default: ""
 
@@ -18,6 +22,18 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: demo
+            app_id: org.memoriaviva.rise.demo
+            app_name: "MemoriaViva Demo"
+            apk_filename: memoriaviva-demo.apk
+          - variant: clean
+            app_id: org.memoriaviva.rise
+            app_name: "MemoriaViva RISE"
+            apk_filename: memoriaviva-clean.apk
 
     steps:
       - name: Checkout repository
@@ -36,10 +52,24 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
+      - name: Configure Capacitor variant (${{ matrix.variant }})
+        working-directory: frontend
+        run: |
+          node -e '
+            const fs = require("fs");
+            const cfg = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
+            cfg.appId = process.env.CAP_APP_ID;
+            cfg.appName = process.env.CAP_APP_NAME;
+            fs.writeFileSync("capacitor.config.json", JSON.stringify(cfg, null, 2) + "\n");
+          '
+        env:
+          CAP_APP_ID: ${{ matrix.app_id }}
+          CAP_APP_NAME: ${{ matrix.app_name }}
+
       - name: Install frontend dependencies & build React bundle
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ github.event.inputs.server_url || vars.APP_SERVER_URL || '' }}
+          VITE_API_URL: ${{ matrix.variant == 'clean' && (github.event.inputs.clean_server_url || vars.APP_CLEAN_SERVER_URL || github.event.inputs.server_url || vars.APP_SERVER_URL || '') || (github.event.inputs.server_url || vars.APP_SERVER_URL || '') }}
         run: |
           npm ci
           npm run build
@@ -51,17 +81,19 @@ jobs:
           node scripts/configure-android.mjs
           npx cap sync android
 
-      - name: Build Debug APK
+      - name: Build Debug APK (${{ matrix.apk_filename }})
         working-directory: frontend/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
+          mkdir -p ../../release-apks
+          cp app/build/outputs/apk/debug/app-debug.apk "../../release-apks/${{ matrix.apk_filename }}"
 
-      - name: Upload Debug APK Artifact
+      - name: Upload APK Artifact (${{ matrix.variant }})
         uses: actions/upload-artifact@v4
         with:
-          name: memoriaviva-rise-debug-apk
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: memoriaviva-${{ matrix.variant }}-apk
+          path: frontend/release-apks/${{ matrix.apk_filename }}
           retention-days: 14
 
       - name: Decode Keystore and Build Signed Release APK (on version tags)
@@ -77,17 +109,18 @@ jobs:
           if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
             echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_FILE}"
             ./gradlew assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk "../../release-apks/signed-${{ matrix.apk_filename }}"
           else
             echo "ANDROID_KEYSTORE_BASE64 not set; skipping signed release APK (debug APK will still be attached)."
           fi
 
-      - name: Publish GitHub Release (on version tags)
+      - name: Publish APKs to GitHub Release (on version tags)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            frontend/android/app/build/outputs/apk/debug/app-debug.apk
-            frontend/android/app/build/outputs/apk/release/app-release.apk
+            frontend/release-apks/${{ matrix.apk_filename }}
+            frontend/release-apks/signed-${{ matrix.apk_filename }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

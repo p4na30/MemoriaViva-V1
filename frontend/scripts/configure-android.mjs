@@ -43,9 +43,24 @@ function configureManifest(manifestPath) {
   console.log("[configure-android] AndroidManifest.xml updated with audio & wake-lock permissions.");
 }
 
+function readAppId() {
+  const cfgPath = path.join(frontendDir, "capacitor.config.json");
+  if (fs.existsSync(cfgPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+      if (cfg.appId) return String(cfg.appId);
+    } catch {
+      // fallback below
+    }
+  }
+  return "org.memoriaviva.rise";
+}
+
 function configureMainActivity(javaDir) {
-  const target = path.join(javaDir, "org", "memoriaviva", "rise", "MainActivity.java");
-  const content = `package org.memoriaviva.rise;
+  const appId = readAppId();
+  const pkgSegments = appId.split(".");
+  const target = path.join(javaDir, ...pkgSegments, "MainActivity.java");
+  const content = `package ${appId};
 
 import android.Manifest;
 import android.content.pm.PackageManager;

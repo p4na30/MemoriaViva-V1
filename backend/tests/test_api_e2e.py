@@ -419,3 +419,79 @@ def test_audio_only_turn_without_browser_transcript_or_gemini_key(tmp_path: Path
     body = r_turn.json()
     assert body["ok"] is True
     assert len(body["assistant_reply"].split()) <= 35
+
+
+def test_production_clean_mode_starts_empty_and_records_real_days(tmp_path: Path, monkeypatch) -> None:
+    """Verify MV_APP_MODE=production starts 100% clean (zero Don Manuel data) and builds real Day 1..N."""
+    monkeypatch.setenv("MV_APP_MODE", "production")
+    monkeypatch.setenv("MV_DISABLE_TG_POLLING", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    client = _build_test_client(tmp_path)
+
+    # 1. Health & clean initial state
+    r_health = client.get("/api/health")
+    assert r_health.status_code == 200
+    assert r_health.json()["app_mode"] == "production"
+
+    r_init = client.get("/api/state")
+    assert r_init.status_code == 200
+    init_state = r_init.json()
+    assert init_state["app_mode"] == "production"
+    assert init_state["account"]["is_registered"] is False
+    assert init_state["account"]["is_demo_mode"] is False
+    assert init_state["history_21_days"] == []
+    assert init_state["demo_scenarios"] == []
+    assert init_state["min_screensaver_photos"] == 1
+    assert init_state["evaluation"]["is_calibrating_baseline"] is True
+    assert init_state["evaluation"]["days_recorded"] == 0
+    assert init_state["evaluation"]["level2_alert_triggered"] is False
+    assert "Don Manuel" not in str(init_state["profile"])
+    assert "Carmen" not in str(init_state["profile"])
+
+    # 2. Demo-only actions are disabled in production mode
+    assert client.post("/api/onboarding/complete", json={"use_demo_persona": True}).status_code == 400
+    assert client.post("/api/photos/sample").status_code == 403
+    assert client.post("/api/demo/reset").status_code == 403
+    assert client.post("/api/turn", json={"demo_scenario_id": "demo_1_rescate", "skip_tts": True}).status_code == 400
+
+    # 3. Manual onboarding creates clean custom patient with zero seeded history or sample photos
+    r_onb = client.post(
+        "/api/onboarding/complete",
+        json={
+            "use_demo_persona": False,
+            "nombre_completo": "Rosa María Hernández",
+            "nombre_preferido": "Doña Rosa",
+            "caregiver_name": "Ana Hernández",
+            "caregiver_username": "ana.h",
+            "pin": "4321",
+            "edad": 76,
+            "ciudad_residencia": "Monterrey, Nuevo León",
+            "consent_accepted": True,
+        },
+    )
+    assert r_onb.status_code == 200
+    st = r_onb.json()["state"]
+    assert st["account"]["is_registered"] is True
+    assert st["account"]["is_demo_mode"] is False
+    assert st["profile"]["paciente"]["nombre_preferido"] == "Doña Rosa"
+    assert st["history_21_days"] == []
+    assert st["photo_count"] == 0
+
+    # 4. First real conversation turn creates real Día 1 while keeping baseline calibration active
+    r_turn = client.post(
+        "/api/turn",
+        json={
+            "custom_text": "Hoy preparé café con pan dulce en la mañana y estuve recordando el jardín de mi casa.",
+            "skip_tts": True,
+        },
+    )
+    assert r_turn.status_code == 200
+    after = r_turn.json()["state"]
+    assert len(after["history_21_days"]) == 1
+    assert after["history_21_days"][0]["day_number"] == 1
+    assert after["history_21_days"][0]["date_label"] == "Día 1"
+    assert after["evaluation"]["days_recorded"] == 1
+    assert after["evaluation"]["is_calibrating_baseline"] is True
+    assert after["evaluation"]["level2_alert_triggered"] is False

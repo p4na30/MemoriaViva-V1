@@ -267,15 +267,22 @@ def evaluate_longitudinal_trend(days: Sequence[Dict[str, Any]]) -> Dict[str, Any
     """
     if not days:
         return {
+            "days_recorded": 0,
+            "is_calibrating_baseline": True,
+            "baseline_target_days": BASELINE_DAYS,
             "baseline_mattr_mean": 0.0,
             "baseline_mattr_std": 0.0,
             "recent_mattr_mean": 0.0,
+            "latest_mattr": 0.0,
             "delta_mattr_pct": 0.0,
+            "delta_mattr_pct_display": 0.0,
             "z_mattr": 0.0,
             "baseline_pause_mean": 0.0,
             "baseline_pause_std": 0.0,
             "recent_pause_mean": 0.0,
+            "latest_pause": 0.0,
             "delta_pause_pct": 0.0,
+            "delta_pause_pct_display": 0.0,
             "z_pause": 0.0,
             "vitality_score": 100,
             "level2_alert_triggered": False,
@@ -284,6 +291,8 @@ def evaluate_longitudinal_trend(days: Sequence[Dict[str, Any]]) -> Dict[str, Any
         }
 
     sorted_days = sorted(days, key=lambda d: int(d.get("day_number", 0)))
+    days_recorded = len(sorted_days)
+    is_calibrating = days_recorded < BASELINE_DAYS
     baseline_slice = sorted_days[:BASELINE_DAYS]
     recent_slice = sorted_days[-RECENT_WINDOW_DAYS:]
 
@@ -300,32 +309,36 @@ def evaluate_longitudinal_trend(days: Sequence[Dict[str, Any]]) -> Dict[str, Any
     sd_pause_base = float(np.std(base_pauses, ddof=0))
     mu_pause_rec = float(np.mean(rec_pauses))
 
-    delta_pause_pct = (mu_pause_rec - mu_pause_base) / max(0.1, mu_pause_base)
-    z_pause = (mu_pause_rec - mu_pause_base) / max(0.05, sd_pause_base)
+    delta_pause_pct = 0.0 if is_calibrating else (mu_pause_rec - mu_pause_base) / max(0.1, mu_pause_base)
+    z_pause = 0.0 if is_calibrating else (mu_pause_rec - mu_pause_base) / max(0.05, sd_pause_base)
 
-    delta_mattr_pct = (mu_mattr_base - mu_mattr_rec) / max(0.1, mu_mattr_base)
-    z_mattr = (mu_mattr_rec - mu_mattr_base) / max(0.01, sd_mattr_base)
+    delta_mattr_pct = 0.0 if is_calibrating else (mu_mattr_base - mu_mattr_rec) / max(0.1, mu_mattr_base)
+    z_mattr = 0.0 if is_calibrating else (mu_mattr_rec - mu_mattr_base) / max(0.01, sd_mattr_base)
 
     alert_reasons: List[str] = []
-    if delta_pause_pct >= CLINICAL_ALERT_PAUSE_INCREASE_PCT:
-        alert_reasons.append(
-            f"Incremento sostenido en pausas (+{round(delta_pause_pct * 100, 1)}% vs línea base)"
-        )
-    if delta_mattr_pct >= CLINICAL_ALERT_MATTR_DROP_PCT:
-        alert_reasons.append(
-            f"Disminución en riqueza léxica MATTR (-{round(delta_mattr_pct * 100, 1)}% vs línea base)"
-        )
-    if z_pause >= Z_SCORE_PAUSE_ALERT:
-        alert_reasons.append(f"Z-Score de pausas elevado (Z = +{round(z_pause, 2)})")
-    if z_mattr <= Z_SCORE_MATTR_ALERT:
-        alert_reasons.append(f"Z-Score de MATTR descendido (Z = {round(z_mattr, 2)})")
+    if not is_calibrating:
+        if delta_pause_pct >= CLINICAL_ALERT_PAUSE_INCREASE_PCT:
+            alert_reasons.append(
+                f"Incremento sostenido en pausas (+{round(delta_pause_pct * 100, 1)}% vs línea base)"
+            )
+        if delta_mattr_pct >= CLINICAL_ALERT_MATTR_DROP_PCT:
+            alert_reasons.append(
+                f"Disminución en riqueza léxica MATTR (-{round(delta_mattr_pct * 100, 1)}% vs línea base)"
+            )
+        if z_pause >= Z_SCORE_PAUSE_ALERT:
+            alert_reasons.append(f"Z-Score de pausas elevado (Z = +{round(z_pause, 2)})")
+        if z_mattr <= Z_SCORE_MATTR_ALERT:
+            alert_reasons.append(f"Z-Score de MATTR descendido (Z = {round(z_mattr, 2)})")
 
     level2_triggered = len(alert_reasons) > 0
 
     # Composite conversational vitality score (0-100) for Caregiver KPI card
-    mattr_penalty = max(0.0, delta_mattr_pct) * 120.0
-    pause_penalty = min(40.0, max(0.0, delta_pause_pct) * 28.0)
-    vitality_score = int(round(max(25.0, min(100.0, 96.0 - mattr_penalty - pause_penalty))))
+    if is_calibrating:
+        vitality_score = int(round(max(65.0, min(100.0, 82.0 + (mu_mattr_rec - 0.55) * 45.0))))
+    else:
+        mattr_penalty = max(0.0, delta_mattr_pct) * 120.0
+        pause_penalty = min(40.0, max(0.0, delta_pause_pct) * 28.0)
+        vitality_score = int(round(max(25.0, min(100.0, 96.0 - mattr_penalty - pause_penalty))))
 
     circadian_summary = {"matutino": 0, "vespertino_sundowning": 0, "nocturno": 0}
     for d in sorted_days:
@@ -335,6 +348,9 @@ def evaluate_longitudinal_trend(days: Sequence[Dict[str, Any]]) -> Dict[str, Any
 
     latest = sorted_days[-1]
     return {
+        "days_recorded": days_recorded,
+        "is_calibrating_baseline": is_calibrating,
+        "baseline_target_days": BASELINE_DAYS,
         "baseline_mattr_mean": round(mu_mattr_base, 3),
         "baseline_mattr_std": round(sd_mattr_base, 3),
         "recent_mattr_mean": round(mu_mattr_rec, 3),

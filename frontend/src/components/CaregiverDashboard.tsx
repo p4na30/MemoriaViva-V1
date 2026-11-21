@@ -88,6 +88,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
   onLockKiosk,
 }) => {
   const { notify } = useToast();
+  const isDemoApp = state.app_mode === "demo";
   const [activeTab, setActiveTab] = useState<DashboardTab>("resumen");
   const [chartMode, setChartMode] = useState<ChartMode>("combinada");
   const [busy, setBusy] = useState(false);
@@ -408,7 +409,9 @@ export const CaregiverDashboard: React.FC<Props> = ({
     { id: "album", label: "Álbum Familiar", icon: <ImageIcon className="w-4 h-4" /> },
     { id: "gobernanza", label: "Gobernanza RISE & IA", icon: <ShieldCheck className="w-4 h-4" /> },
     { id: "configuracion", label: "Configuración", icon: <Settings className="w-4 h-4" /> },
-    { id: "simulador", label: "Simulador Demo", icon: <Play className="w-4 h-4" /> },
+    ...(isDemoApp
+      ? [{ id: "simulador" as DashboardTab, label: "Simulador Demo", icon: <Play className="w-4 h-4" /> }]
+      : []),
   ];
 
   const isDark = theme === "dark";
@@ -497,22 +500,38 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   <span
                     className="px-2 py-0.5 rounded-full font-semibold"
                     style={{
-                      backgroundColor: ev.level2_alert_triggered ? "var(--amber-soft)" : "var(--emerald-soft)",
-                      color: ev.level2_alert_triggered ? "var(--amber)" : "var(--emerald)",
+                      backgroundColor: ev.is_calibrating_baseline
+                        ? "var(--primary-soft)"
+                        : ev.level2_alert_triggered
+                          ? "var(--amber-soft)"
+                          : "var(--emerald-soft)",
+                      color: ev.is_calibrating_baseline
+                        ? "var(--primary)"
+                        : ev.level2_alert_triggered
+                          ? "var(--amber)"
+                          : "var(--emerald)",
                     }}
                   >
-                    {ev.level2_alert_triggered ? "Revisión sugerida" : "Estable"}
+                    {ev.is_calibrating_baseline
+                      ? `Calibrando (${ev.days_recorded ?? state.history_21_days.length}/${ev.baseline_target_days ?? 14} d)`
+                      : ev.level2_alert_triggered
+                        ? "Revisión sugerida"
+                        : "Estable"}
                   </span>
                 </div>
                 <div className="text-3xl font-bold tabular-nums">
-                  {ev.vitality_score}
-                  <span className="text-base font-medium" style={{ color: "var(--text-muted)" }}>
-                    {" "}
-                    / 100
-                  </span>
+                  {state.history_21_days.length === 0 ? "—" : ev.vitality_score}
+                  {state.history_21_days.length > 0 && (
+                    <span className="text-base font-medium" style={{ color: "var(--text-muted)" }}>
+                      {" "}
+                      / 100
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Auto-referenciado vs Días 1–14 · {state.recent_turns.length} turno(s) nuevo(s) en SQLite
+                  {ev.is_calibrating_baseline
+                    ? `Calibrando Línea Base Personal (${ev.days_recorded ?? state.history_21_days.length}/${ev.baseline_target_days ?? 14} días) · ${state.recent_turns.length} turno(s)`
+                    : `Auto-referenciado vs Días 1–14 · ${state.recent_turns.length} turno(s) nuevo(s) en SQLite`}
                 </p>
               </div>
 
@@ -585,92 +604,108 @@ export const CaregiverDashboard: React.FC<Props> = ({
                 </div>
 
                 <div className="h-80 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart
-                      data={state.history_21_days}
-                      margin={{ top: 12, right: 20, left: 6, bottom: 4 }}
+                  {state.history_21_days.length === 0 ? (
+                    <div
+                      className="h-full rounded-xl border border-dashed flex flex-col items-center justify-center text-center px-6 gap-2"
+                      style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-                      <XAxis
-                        dataKey="date_label"
-                        tick={{ fontSize: 11, fill: axisTickColor }}
-                        interval={2}
-                      />
-                      {(chartMode === "combinada" || chartMode === "mattr") && (
-                        <YAxis
-                          yAxisId="left"
-                          domain={[0.35, 1.0]}
+                      <Activity className="w-8 h-8" style={{ color: "var(--primary)" }} />
+                      <h3 className="text-sm font-semibold">Día 1 de Línea Base Personal</h3>
+                      <p className="text-xs max-w-md" style={{ color: "var(--text-muted)" }}>
+                        Aún no hay conversaciones registradas para {paciente.nombre_preferido}. Activa el{" "}
+                        <strong>Modo Kiosco</strong> para grabar su primer turno real y comenzar a calibrar su línea base (D1–D14).
+                      </p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart
+                        data={state.history_21_days}
+                        margin={{ top: 12, right: 20, left: 6, bottom: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                        <XAxis
+                          dataKey="date_label"
                           tick={{ fontSize: 11, fill: axisTickColor }}
-                          label={{
-                            value: "MATTR",
-                            angle: -90,
-                            position: "insideLeft",
-                            style: { fontSize: 11, fill: axisTickColor },
+                          interval={state.history_21_days.length > 7 ? 2 : 0}
+                        />
+                        {(chartMode === "combinada" || chartMode === "mattr") && (
+                          <YAxis
+                            yAxisId="left"
+                            domain={[0.35, 1.0]}
+                            tick={{ fontSize: 11, fill: axisTickColor }}
+                            label={{
+                              value: "MATTR",
+                              angle: -90,
+                              position: "insideLeft",
+                              style: { fontSize: 11, fill: axisTickColor },
+                            }}
+                          />
+                        )}
+                        {(chartMode === "combinada" || chartMode === "pausas") && (
+                          <YAxis
+                            yAxisId="right"
+                            orientation={chartMode === "pausas" ? "left" : "right"}
+                            domain={[0, "auto"]}
+                            tick={{ fontSize: 11, fill: axisTickColor }}
+                            label={{
+                              value: "Pausa (s)",
+                              angle: chartMode === "pausas" ? -90 : 90,
+                              position: chartMode === "pausas" ? "insideLeft" : "insideRight",
+                              style: { fontSize: 11, fill: axisTickColor },
+                            }}
+                          />
+                        )}
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: isDark ? "#171E26" : "#FFFFFF",
+                            borderColor: gridStroke,
+                            borderRadius: "10px",
+                            fontSize: "12px",
                           }}
                         />
-                      )}
-                      {(chartMode === "combinada" || chartMode === "pausas") && (
-                        <YAxis
-                          yAxisId="right"
-                          orientation={chartMode === "pausas" ? "left" : "right"}
-                          domain={[0, "auto"]}
-                          tick={{ fontSize: 11, fill: axisTickColor }}
-                          label={{
-                            value: "Pausa (s)",
-                            angle: chartMode === "pausas" ? -90 : 90,
-                            position: chartMode === "pausas" ? "insideLeft" : "insideRight",
-                            style: { fontSize: 11, fill: axisTickColor },
-                          }}
-                        />
-                      )}
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: isDark ? "#171E26" : "#FFFFFF",
-                          borderColor: gridStroke,
-                          borderRadius: "10px",
-                          fontSize: "12px",
-                        }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "6px" }} />
-                      <ReferenceArea
-                        yAxisId={chartMode === "pausas" ? "right" : "left"}
-                        x1="Día 1"
-                        x2="Día 14"
-                        fill={isDark ? "#22B8CF" : "#0E7490"}
-                        fillOpacity={0.09}
-                        label={{
-                          value: "Base D1–D14",
-                          position: "insideTopLeft",
-                          fill: axisTickColor,
-                          fontSize: 11,
-                        }}
-                      />
-                      {(chartMode === "combinada" || chartMode === "mattr") && (
-                        <Line
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="mattr"
-                          name="Riqueza Léxica (MATTR)"
-                          stroke={isDark ? "#22B8CF" : "#0E7490"}
-                          strokeWidth={2.5}
-                          dot={{ r: 3 }}
-                          activeDot={{ r: 5 }}
-                        />
-                      )}
-                      {(chartMode === "combinada" || chartMode === "pausas") && (
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="mean_pause"
-                          name="Pausa Media (s)"
-                          stroke={isDark ? "#F59E0B" : "#D97706"}
-                          strokeWidth={2.5}
-                          dot={{ r: 3 }}
-                          activeDot={{ r: 5 }}
-                        />
-                      )}
-                    </ComposedChart>
-                  </ResponsiveContainer>
+                        <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "6px" }} />
+                        {state.history_21_days.length >= 14 && (
+                          <ReferenceArea
+                            yAxisId={chartMode === "pausas" ? "right" : "left"}
+                            x1="Día 1"
+                            x2="Día 14"
+                            fill={isDark ? "#22B8CF" : "#0E7490"}
+                            fillOpacity={0.09}
+                            label={{
+                              value: "Base D1–D14",
+                              position: "insideTopLeft",
+                              fill: axisTickColor,
+                              fontSize: 11,
+                            }}
+                          />
+                        )}
+                        {(chartMode === "combinada" || chartMode === "mattr") && (
+                          <Line
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="mattr"
+                            name="Riqueza Léxica (MATTR)"
+                            stroke={isDark ? "#22B8CF" : "#0E7490"}
+                            strokeWidth={2.5}
+                            dot={{ r: 3 }}
+                            activeDot={{ r: 5 }}
+                          />
+                        )}
+                        {(chartMode === "combinada" || chartMode === "pausas") && (
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="mean_pause"
+                            name="Pausa Media (s)"
+                            stroke={isDark ? "#F59E0B" : "#D97706"}
+                            strokeWidth={2.5}
+                            dot={{ r: 3 }}
+                            activeDot={{ r: 5 }}
+                          />
+                        )}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
 
                 {/* Action Bar: PDF Report + Level 2 Warning */}
@@ -766,7 +801,9 @@ export const CaregiverDashboard: React.FC<Props> = ({
                 <div className="flex-1 space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
                   {state.telegram_logs.length === 0 ? (
                     <p className="text-xs py-6 text-center" style={{ color: "var(--text-muted)" }}>
-                      Ejecuta un turno en el Kiosco o Simulador Demo para ver las notificaciones Nivel 1, 2 y 3 en tiempo real.
+                      {isDemoApp
+                        ? "Ejecuta un turno en el Kiosco o Simulador Demo para ver las notificaciones Nivel 1, 2 y 3 en tiempo real."
+                        : "Cuando el adulto mayor platique en el Modo Kiosco, aquí aparecerán los avisos familiares Nivel 1, 2 y 3 en tiempo real."}
                     </p>
                   ) : (
                     state.telegram_logs.map((log) => (
@@ -834,7 +871,9 @@ export const CaregiverDashboard: React.FC<Props> = ({
               </div>
               {state.profile.recuerdos_aprendidos.length === 0 ? (
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Cuando {paciente.nombre_preferido} comparta un recuerdo nuevo (ej. su perro Sultán en el Acto 1), se guardará automáticamente aquí y en su perfil JSON.
+                  {isDemoApp
+                    ? `Cuando ${paciente.nombre_preferido} comparta un recuerdo nuevo (ej. su perro Sultán en el Acto 1), se guardará automáticamente aquí y en su perfil JSON.`
+                    : `Cuando ${paciente.nombre_preferido} comparta un recuerdo nuevo durante sus pláticas, se guardará automáticamente aquí para enriquecer futuras conversaciones.`}
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-2">
@@ -864,15 +903,17 @@ export const CaregiverDashboard: React.FC<Props> = ({
                     <ImagePlus className="w-5 h-5" style={{ color: "var(--primary)" }} />
                     <h2 className="text-base font-semibold">Agregar Fotografía al Anclaje Visual</h2>
                   </div>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={handleRestoreSamples}
-                    className="btn-secondary text-xs"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Restaurar 10 postales
-                  </button>
+                  {isDemoApp && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleRestoreSamples}
+                      className="btn-secondary text-xs"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Restaurar 10 postales
+                    </button>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -880,7 +921,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
                     <span className="font-medium">Título del recuerdo</span>
                     <input
                       className="clinical-input"
-                      placeholder="Ej. Vacaciones en Manzanillo"
+                      placeholder={isDemoApp ? "Ej. Vacaciones en Manzanillo" : "Ej. Comida familiar del domingo"}
                       value={photoTitle}
                       onChange={(e) => setPhotoTitle(e.target.value)}
                     />
@@ -1069,13 +1110,17 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   Zona de Restablecimiento
                 </h3>
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Vuelve al asistente inicial de Onboarding o reinicia el estado de pruebas de Don Manuel.
+                  {isDemoApp
+                    ? "Vuelve al asistente inicial de Onboarding o reinicia el estado de pruebas de Don Manuel."
+                    : "Vuelve al asistente inicial de Onboarding para registrar un perfil desde cero."}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={handleResetDemo} className="btn-secondary text-xs">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Reiniciar datos Demo
-                  </button>
+                  {isDemoApp && (
+                    <button type="button" onClick={handleResetDemo} className="btn-secondary text-xs">
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Reiniciar datos Demo
+                    </button>
+                  )}
                   <button type="button" onClick={handleResetSystem} className="btn-danger text-xs">
                     Restablecer Onboarding
                   </button>
@@ -1216,7 +1261,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
         )}
 
         {/* ================= TAB 5: SIMULADOR DEMO (PITCH FAIL-SAFE) ================= */}
-        {activeTab === "simulador" && (
+        {activeTab === "simulador" && isDemoApp && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>

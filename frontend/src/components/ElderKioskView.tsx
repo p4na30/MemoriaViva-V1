@@ -58,8 +58,9 @@ const THEME_LABELS: Record<string, string> = {
 
 export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlocked }) => {
   const { notify } = useToast();
+  const isDemoKiosk = state.app_mode === "demo" && state.account.is_demo_mode;
   const photos = state.photos;
-  const elderName = state.profile.paciente.nombre_preferido || "Don Manuel";
+  const elderName = state.profile.paciente.nombre_preferido || "familiar";
   const rotationSec = state.account.rotation_interval_sec || 8;
   const vadSilenceMs = Math.round((state.silence_threshold_sec || 3.8) * 1000);
 
@@ -422,11 +423,13 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       }
     } catch {
       notify(
-        "No se pudo acceder al micrófono. Puedes usar los actos Fail-Safe Demo (teclas 1, 2, 3) o habilitar permisos.",
+        isDemoKiosk
+          ? "No se pudo acceder al micrófono. Puedes usar los actos Fail-Safe Demo (teclas 1, 2, 3) o habilitar permisos."
+          : "No se pudo acceder al micrófono. Verifica los permisos de audio del navegador o dispositivo.",
         "error"
       );
     }
-  }, [isProcessing, pinModalOpen, voiceMode, vadSilenceMs, stopListeningAndSubmit, notify]);
+  }, [isProcessing, pinModalOpen, voiceMode, vadSilenceMs, stopListeningAndSubmit, notify, isDemoKiosk]);
 
   const handleRunDemoAct = useCallback(
     async (scenarioId: string) => {
@@ -496,7 +499,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         } else {
           startListening();
         }
-      } else if (state.account.is_demo_mode && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      } else if (isDemoKiosk && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (e.key === "1") handleRunDemoAct("demo_1_rescate");
         if (e.key === "2") handleRunDemoAct("demo_2_anomia");
         if (e.key === "3") handleRunDemoAct("demo_3_crisis");
@@ -515,7 +518,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [pinModalOpen, voiceMode, state.account.is_demo_mode, startListening, stopListeningAndSubmit, handleRunDemoAct]);
+  }, [pinModalOpen, voiceMode, isDemoKiosk, startListening, stopListeningAndSubmit, handleRunDemoAct]);
 
   useEffect(() => () => cleanupCaptureResources(), [cleanupCaptureResources]);
 
@@ -600,7 +603,14 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           />
         </>
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-cyan-950" />
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950 flex items-center justify-center px-6 text-center">
+          <div className="max-w-md space-y-2 opacity-75">
+            <ImageIcon className="w-10 h-10 mx-auto text-cyan-300/80" />
+            <p className="text-sm text-slate-200">
+              Añade fotografías familiares desde el Panel Familiar (candado) o envíalas por Telegram para activar el marco digital.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Cinematic Top & Bottom Legibility Vignette */}
@@ -826,7 +836,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       </footer>
 
       {/* Discreet Fail-Safe Pitch Controls (only visible in Demo Mode) */}
-      {state.account.is_demo_mode && (
+      {isDemoKiosk && (
         <div className="fixed bottom-4 left-4 z-30 flex items-center gap-1.5">
           <button
             type="button"
@@ -897,7 +907,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
               Ingresa el PIN del cuidador para consultar biomarcadores, gobernanza RISE y el reporte clínico PDF.
             </p>
 
-            {state.account.is_demo_mode && (
+            {isDemoKiosk && (
               <div
                 className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
                 style={{ backgroundColor: "var(--primary-soft)", color: "var(--primary)" }}

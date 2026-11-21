@@ -44,6 +44,7 @@ export const OnboardingWizard: React.FC<Props> = ({
   onStateChange,
 }) => {
   const { notify } = useToast();
+  const isDemoApp = state.app_mode === "demo";
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
   const [showBioAccordion, setShowBioAccordion] = useState(false);
@@ -59,8 +60,8 @@ export const OnboardingWizard: React.FC<Props> = ({
   const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
 
   // Optional biographical details
-  const [edad, setEdad] = useState("72");
-  const [ciudad, setCiudad] = useState("San Pedro Tlaquepaque, Jalisco");
+  const [edad, setEdad] = useState(isDemoApp ? "72" : "");
+  const [ciudad, setCiudad] = useState(isDemoApp ? "San Pedro Tlaquepaque, Jalisco" : "");
   const [ocupacion, setOcupacion] = useState("");
   const [pareja, setPareja] = useState("");
   const [hijosDetalle, setHijosDetalle] = useState("");
@@ -296,33 +297,35 @@ export const OnboardingWizard: React.FC<Props> = ({
           </div>
         </header>
 
-        {/* 1-Click Judge / Demo Persona Hero Banner */}
-        <section
-          className="clinical-card p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-          style={{
-            backgroundColor: "var(--primary-soft)",
-            borderColor: "color-mix(in srgb, var(--primary) 30%, var(--border))",
-          }}
-        >
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--primary)" }}>
-              <Sparkles className="w-3.5 h-3.5" />
-              Inicio Rápido para Jurado y Demo en Vivo
-            </div>
-            <p className="text-sm font-medium">
-              Activa al instante el caso clínico de <strong>Don Manuel (72 años)</strong> con 10 postales familiares y serie longitudinal de 21 días.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={handleQuickDemoActivate}
-            className="btn-primary shrink-0 w-full sm:w-auto"
+        {/* 1-Click Judge / Demo Persona Hero Banner (only in Demo edition) */}
+        {isDemoApp && (
+          <section
+            className="clinical-card p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+            style={{
+              backgroundColor: "var(--primary-soft)",
+              borderColor: "color-mix(in srgb, var(--primary) 30%, var(--border))",
+            }}
           >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            Activación Rápida Demo (1 Clic)
-          </button>
-        </section>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--primary)" }}>
+                <Sparkles className="w-3.5 h-3.5" />
+                Inicio Rápido para Jurado y Demo en Vivo
+              </div>
+              <p className="text-sm font-medium">
+                Activa al instante el caso clínico de <strong>Don Manuel (72 años)</strong> con 10 postales familiares y serie longitudinal de 21 días.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleQuickDemoActivate}
+              className="btn-primary shrink-0 w-full sm:w-auto"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              Activación Rápida Demo (1 Clic)
+            </button>
+          </section>
+        )}
 
         {/* 4-Bar Horizontal Stepper */}
         <nav aria-label="Pasos de configuración" className="grid grid-cols-4 gap-2">
@@ -367,9 +370,11 @@ export const OnboardingWizard: React.FC<Props> = ({
                     Solo 6 campos esenciales. El PIN protege el Panel Clínico del cuidador.
                   </p>
                 </div>
-                <button type="button" onClick={loadDonManuelExample} className="btn-secondary text-xs">
-                  Cargar ejemplo (Don Manuel)
-                </button>
+                {isDemoApp && (
+                  <button type="button" onClick={loadDonManuelExample} className="btn-secondary text-xs">
+                    Cargar ejemplo (Don Manuel)
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -377,7 +382,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <span className="font-medium">Nombre completo del adulto mayor</span>
                   <input
                     className="clinical-input"
-                    placeholder="Ej. Manuel González Magaña"
+                    placeholder={isDemoApp ? "Ej. Manuel González Magaña" : "Ej. María Elena Morales"}
                     value={nombreCompleto}
                     onChange={(e) => setNombreCompleto(e.target.value)}
                   />
@@ -386,7 +391,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <span className="font-medium">Cómo prefiere que le llamen</span>
                   <input
                     className="clinical-input"
-                    placeholder="Ej. Don Manuel"
+                    placeholder={isDemoApp ? "Ej. Don Manuel" : "Ej. Doña Elena"}
                     value={nombrePreferido}
                     onChange={(e) => setNombrePreferido(e.target.value)}
                   />
@@ -395,7 +400,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <span className="font-medium">Familiar responsable</span>
                   <input
                     className="clinical-input"
-                    placeholder="Ej. Laura González"
+                    placeholder={isDemoApp ? "Ej. Laura González" : "Ej. Carlos Morales"}
                     value={caregiverName}
                     onChange={(e) => setCaregiverName(e.target.value)}
                   />
@@ -404,7 +409,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <span className="font-medium">Usuario familiar</span>
                   <input
                     className="clinical-input"
-                    placeholder="Ej. laura.gonzalez"
+                    placeholder={isDemoApp ? "Ej. laura.gonzalez" : "Ej. carlos.morales"}
                     value={caregiverUsername}
                     onChange={(e) => setCaregiverUsername(e.target.value)}
                   />
@@ -643,20 +648,28 @@ export const OnboardingWizard: React.FC<Props> = ({
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="text-base font-semibold">4. Álbum Familiar (Mínimo {minPhotos} fotos)</h2>
+                  <h2 className="text-base font-semibold">
+                    {isDemoApp
+                      ? `4. Álbum Familiar (Mínimo ${minPhotos} fotos)`
+                      : `4. Álbum Familiar (Desde ${minPhotos} foto propia)`}
+                  </h2>
                   <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    El Modo Kiosco rota estas postales y sincroniza la imagen con lo que el adulto mayor conversa.
+                    {isDemoApp
+                      ? "El Modo Kiosco rota estas postales y sincroniza la imagen con lo que el adulto mayor conversa."
+                      : "Sube una o más fotografías familiares ahora (también puedes agregar o enviar más después por Telegram)."}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleGenerateSamples}
-                  className="btn-secondary text-xs"
-                >
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  Completar con 10 postales de muestra
-                </button>
+                {isDemoApp && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleGenerateSamples}
+                    className="btn-secondary text-xs"
+                  >
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    Completar con 10 postales de muestra
+                  </button>
+                )}
               </div>
 
               <div className="space-y-1.5">

@@ -86,6 +86,9 @@ export interface LongitudinalEvaluation {
   vitality_score: number;
   level2_alert_triggered: boolean;
   alert_reasons: string[];
+  days_recorded?: number;
+  is_calibrating_baseline?: boolean;
+  baseline_target_days?: number;
   circadian_summary: {
     matutino: number;
     vespertino_sundowning: number;
@@ -204,6 +207,7 @@ export interface ConfoundingFactorItem {
 }
 
 export interface AppState {
+  app_mode: "demo" | "production";
   account: AccountConfig;
   profile: PatientProfile;
   history_21_days: LongitudinalDay[];

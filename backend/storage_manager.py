@@ -24,6 +24,7 @@ from backend.config import (
     PROFILES_DIR,
     SAMPLE_ASSETS_DIR,
     ensure_data_directories,
+    is_production_mode,
 )
 from backend.database import DatabaseManager
 
@@ -95,14 +96,15 @@ class StorageManager:
         self._ensure_default_account()
 
     def _default_account(self) -> Dict[str, Any]:
+        prod = is_production_mode()
         return {
             "is_registered": False,
             "kiosk_locked": False,
-            "active_profile_id": "don_manuel",
-            "is_demo_mode": True,
-            "caregiver_name": "Laura González",
-            "caregiver_username": "laura.gonzalez",
-            "pin_hash": hash_pin("1234"),
+            "active_profile_id": "nuevo_paciente" if prod else "don_manuel",
+            "is_demo_mode": not prod,
+            "caregiver_name": "" if prod else "Laura González",
+            "caregiver_username": "" if prod else "laura.gonzalez",
+            "pin_hash": "" if prod else hash_pin("1234"),
             "rotation_interval_sec": 8,
             "theme_mode": "light",
             "voice_gender": "male",
@@ -194,6 +196,34 @@ class StorageManager:
     def load_demo_seed_profile(self) -> Dict[str, Any]:
         return json.loads(DEMO_PROFILE_PATH.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def build_blank_profile(profile_id: str = "nuevo_paciente") -> Dict[str, Any]:
+        return {
+            "paciente": {
+                "id": profile_id,
+                "tipo_perfil": "familiar_personalizado",
+                "nombre_completo": "",
+                "nombre_preferido": "",
+                "edad": 70,
+                "ciudad_residencia": "",
+                "ocupacion_historica": "",
+            },
+            "red_familiar_y_afectiva": {
+                "esposa_finada": "",
+                "hija_mayor_cuidadora": {"nombre": "", "ciudad": "", "detalle": ""},
+                "hija_menor": {"nombre": "", "ciudad": "", "ocupacion": "", "detalle": ""},
+                "nietos": [],
+            },
+            "anclas_de_reminiscencia": [],
+            "recuerdos_aprendidos": [],
+            "rutinas_salud_suaves": [],
+            "contacto_emergencia_telegram": {
+                "nombre": "",
+                "parentesco": "Familiar",
+                "chat_id": "",
+            },
+        }
+
     def load_profile(self, profile_id: Optional[str] = None) -> Dict[str, Any]:
         pid = profile_id or self.load_account_config().get("active_profile_id", "don_manuel")
         path = self._profile_path(pid)
@@ -202,6 +232,10 @@ class StorageManager:
                 return json.loads(path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 pass
+        if is_production_mode() or pid != "don_manuel":
+            blank = self.build_blank_profile(pid)
+            self.save_profile(blank, pid)
+            return blank
         seed = self.load_demo_seed_profile()
         self.save_profile(seed, pid)
         return seed

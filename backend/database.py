@@ -315,19 +315,76 @@ class DatabaseManager:
         is_repetition: bool,
         mood: str,
         circadian_period: str,
+        auto_seed: bool = True,
     ) -> Dict[str, Any]:
-        """Blend a newly recorded turn into Day 21 (current day) in SQLite."""
-        days = self.get_longitudinal_days(profile_id)
-        if not days:
-            days = self.seed_longitudinal_days(profile_id)
-        latest = days[-1]
-        day_num = int(latest["day_number"])
+        """Blend a newly recorded turn into the current longitudinal day in SQLite.
 
+        When auto_seed=False (clean production mode), creates real Day 1, Day 2, ...
+        progressively without injecting Don Manuel's 21 seeded days.
+        """
+        days = self.get_longitudinal_days(profile_id)
+        mood_label = mood.replace("_", " ").capitalize()
+        now_iso = self._now_iso()
+
+        if not days:
+            if auto_seed:
+                days = self.seed_longitudinal_days(profile_id)
+            else:
+                with self._connection(write=True) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO longitudinal_days (
+                            profile_id, day_number, date_label, mattr, mean_pause,
+                            anomic_pauses, repetitions, mood, circadian_period, updated_at
+                        ) VALUES (?, 1, 'Día 1', ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            profile_id,
+                            round(float(mattr), 3),
+                            round(float(mean_pause), 3),
+                            int(anomic_count),
+                            1 if is_repetition else 0,
+                            mood_label,
+                            circadian_period,
+                            now_iso,
+                        ),
+                    )
+                return self.get_longitudinal_days(profile_id)[-1]
+
+        latest = days[-1]
+        # In production mode, start a new day entry if the previous entry was on an earlier calendar date
+        latest_date = str(latest.get("updated_at") or "")[:10]
+        today_date = now_iso[:10]
+        if not auto_seed and latest_date and latest_date != today_date:
+            next_num = int(latest["day_number"]) + 1
+            with self._connection(write=True) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO longitudinal_days (
+                        profile_id, day_number, date_label, mattr, mean_pause,
+                        anomic_pauses, repetitions, mood, circadian_period, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        profile_id,
+                        next_num,
+                        f"Día {next_num}",
+                        round(float(mattr), 3),
+                        round(float(mean_pause), 3),
+                        int(anomic_count),
+                        1 if is_repetition else 0,
+                        mood_label,
+                        circadian_period,
+                        now_iso,
+                    ),
+                )
+            return self.get_longitudinal_days(profile_id)[-1]
+
+        day_num = int(latest["day_number"])
         blended_mattr = round((float(latest["mattr"]) * 0.65) + (mattr * 0.35), 3) if mattr > 0 else float(latest["mattr"])
         blended_pause = round((float(latest["mean_pause"]) * 0.65) + (mean_pause * 0.35), 3) if mean_pause > 0 else float(latest["mean_pause"])
         new_anomic = int(latest["anomic_pauses"]) + int(anomic_count)
         new_reps = int(latest["repetitions"]) + (1 if is_repetition else 0)
-        mood_label = mood.replace("_", " ").capitalize()
 
         with self._connection(write=True) as conn:
             conn.execute(
@@ -344,7 +401,7 @@ class DatabaseManager:
                     new_reps,
                     mood_label,
                     circadian_period,
-                    self._now_iso(),
+                    now_iso,
                     profile_id,
                     day_num,
                 ),

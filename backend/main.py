@@ -39,6 +39,7 @@ from backend.config import (
     MIN_SCREENSAVER_PHOTOS,
     SILENCE_THRESHOLD_SEC,
     ensure_data_directories,
+    get_app_mode,
     get_gemini_api_key,
     get_telegram_bot_token,
     update_runtime_credentials,
@@ -134,9 +135,13 @@ def create_app(
     storage = storage_manager or StorageManager(db=db)
     telegram = telegram_notifier or TelegramNotifier(db=db)
 
-    # Ensure 21-day baseline and active UUID v4 Telegram link exist on boot
-    db.seed_longitudinal_days("don_manuel")
-    storage.ensure_telegram_link("don_manuel")
+    # Ensure 21-day baseline only in Demo mode; clean Production mode starts empty from Day 1
+    app_mode = get_app_mode()
+    if app_mode == "demo":
+        db.seed_longitudinal_days("don_manuel")
+        storage.ensure_telegram_link("don_manuel")
+    else:
+        storage.ensure_telegram_link(storage.load_account_config().get("active_profile_id", "nuevo_paciente"))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -164,12 +169,16 @@ def create_app(
     def _active_profile_id() -> str:
         return str(storage.load_account_config().get("active_profile_id", "don_manuel"))
 
+    def _min_photos_required() -> int:
+        return 1 if get_app_mode() == "production" else MIN_SCREENSAVER_PHOTOS
+
     def _build_full_state() -> Dict[str, Any]:
+        mode = get_app_mode()
         account = storage.get_public_account_config()
-        pid = account.get("active_profile_id", "don_manuel")
+        pid = account.get("active_profile_id", "nuevo_paciente" if mode == "production" else "don_manuel")
         profile = storage.load_profile(pid)
         days = db.get_longitudinal_days(pid)
-        if not days:
+        if not days and mode == "demo":
             days = db.seed_longitudinal_days(pid)
         evaluation = evaluate_longitudinal_trend(days)
         photos = storage.list_photos(pid)
@@ -180,13 +189,14 @@ def create_app(
             link_record=tg_link,
         )
         return {
+            "app_mode": mode,
             "account": account,
             "profile": profile,
             "history_21_days": days,
             "evaluation": evaluation,
             "photos": photos,
             "photo_count": len(photos),
-            "min_screensaver_photos": MIN_SCREENSAVER_PHOTOS,
+            "min_screensaver_photos": _min_photos_required(),
             "silence_threshold_sec": SILENCE_THRESHOLD_SEC,
             "memory_album_themes": MEMORY_ALBUM_THEMES,
             "confounding_factors_catalog": CONFOUNDING_FACTORS,
@@ -196,7 +206,9 @@ def create_app(
             "clinical_reviews": db.get_clinical_reviews(pid, limit=30),
             "consent_events": db.get_consent_events(pid),
             "ai_tools_disclosure": AI_TOOLS_DISCLOSURE,
-            "demo_scenarios": [
+            "demo_scenarios": []
+            if mode == "production"
+            else [
                 {
                     "id": s["id"],
                     "title": s["title"],
@@ -221,6 +233,7 @@ def create_app(
         return {
             "status": "ok",
             "service": "MemoriaViva RISE v3.0",
+            "app_mode": get_app_mode(),
             "cloud_run_shield": IS_CLOUD_RUN,
             "gemini_configured": bool(get_gemini_api_key()),
             "telegram_configured": bool(get_telegram_bot_token()),
@@ -235,6 +248,12 @@ def create_app(
     # ------------------------------------------------------------------
     @app.post("/api/onboarding/complete")
     def complete_onboarding(req: OnboardingCompleteRequest) -> Dict[str, Any]:
+        mode = get_app_mode()
+        if mode == "production" and req.use_demo_persona:
+            raise HTTPException(
+                status_code=400,
+                detail="El perfil Demo está deshabilitado en la versión limpia (production).",
+            )
         cfg = storage.load_account_config()
         was_registered = bool(cfg.get("is_registered"))
         prev_link_uuid = str(cfg.get("telegram_link_code") or "").strip()
@@ -299,7 +318,8 @@ def create_app(
                 },
             }
             profile = storage.save_profile(custom_profile, pid)
-            db.seed_longitudinal_days(pid, force=False)
+            if mode == "demo":
+                db.seed_longitudinal_days(pid, force=False)
 
             cfg["active_profile_id"] = pid
             cfg["is_demo_mode"] = False
@@ -326,10 +346,11 @@ def create_app(
             cfg["telegram_chat_id"] = tg_link["chat_id"]
         storage.save_account_config(cfg)
 
-        # Guarantee at least 10 themed photos for the Kiosk
-        photos = storage.list_photos(pid)
-        if len(photos) < MIN_SCREENSAVER_PHOTOS:
-            storage.ensure_sample_photos(pid)
+        # In Demo mode guarantee 10+ sample postcards; in clean Production mode keep only family's own photos
+        if mode == "demo":
+            photos = storage.list_photos(pid)
+            if len(photos) < MIN_SCREENSAVER_PHOTOS:
+                storage.ensure_sample_photos(pid)
 
         db.insert_consent_event(
             profile_id=pid,
@@ -428,6 +449,11 @@ def create_app(
         }
 
         if req.demo_scenario_id:
+            if get_app_mode() == "production":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Los escenarios demo están deshabilitados en la versión limpia.",
+                )
             scenario = DEMO_SCENARIOS.get(req.demo_scenario_id)
             if not scenario:
                 raise HTTPException(status_code=400, detail="Escenario demo no reconocido.")
@@ -539,6 +565,7 @@ def create_app(
             is_repetition=rep_res["is_repetition"],
             mood=llm_res.get("emotional_state", "tranquilo"),
             circadian_period=circadian,
+            auto_seed=(get_app_mode() == "demo"),
         )
 
         # 5 & 6. Run Telegram delivery + Edge-TTS in parallel inside the request
@@ -645,7 +672,7 @@ def create_app(
     def get_photos() -> Dict[str, Any]:
         pid = _active_profile_id()
         photos = storage.list_photos(pid)
-        return {"photos": photos, "count": len(photos), "min_required": MIN_SCREENSAVER_PHOTOS}
+        return {"photos": photos, "count": len(photos), "min_required": _min_photos_required()}
 
     @app.post("/api/photos")
     async def upload_photo(
@@ -673,6 +700,11 @@ def create_app(
 
     @app.post("/api/photos/sample")
     def generate_sample_photos() -> Dict[str, Any]:
+        if get_app_mode() == "production":
+            raise HTTPException(
+                status_code=403,
+                detail="Las postales de muestra de Don Manuel no están disponibles en la versión limpia.",
+            )
         pid = _active_profile_id()
         photos = storage.ensure_sample_photos(pid)
         return {"ok": True, "photos": photos, "count": len(photos)}
@@ -681,10 +713,11 @@ def create_app(
     def remove_photo(filename: str) -> Dict[str, Any]:
         pid = _active_profile_id()
         current = storage.list_photos(pid)
-        if len(current) <= MIN_SCREENSAVER_PHOTOS:
+        min_req = _min_photos_required()
+        if len(current) <= min_req:
             raise HTTPException(
                 status_code=400,
-                detail=f"El Modo Kiosco requiere al menos {MIN_SCREENSAVER_PHOTOS} fotografías en el álbum.",
+                detail=f"El Modo Kiosco requiere al menos {min_req} fotografía(s) en el álbum.",
             )
         deleted = storage.delete_photo(filename, pid)
         if not deleted:
@@ -873,6 +906,11 @@ def create_app(
     @app.post("/api/demo/reset")
     def reset_demo_rehearsal() -> Dict[str, Any]:
         """Reset Don Manuel's 21-day seed, turns, reviews and learned facts for pitch rehearsals."""
+        if get_app_mode() == "production":
+            raise HTTPException(
+                status_code=403,
+                detail="El reinicio de Demo no está disponible en la versión limpia (production).",
+            )
         pid = _active_profile_id()
         db.reset_demo_state(pid)
         if pid == "don_manuel":

@@ -8,8 +8,18 @@ set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
 REGION="${GCP_REGION:-us-central1}"
-SERVICE_NAME="${CLOUD_RUN_SERVICE:-memoriaviva-rise}"
-BUCKET_NAME="${GCS_DATA_BUCKET:-memoriaviva-data-${PROJECT_ID}}"
+APP_MODE="${MV_APP_MODE:-demo}"
+if [[ "${APP_MODE}" == "production" || "${APP_MODE}" == "clean" ]]; then
+  APP_MODE="production"
+  DEFAULT_SERVICE="memoriaviva-clean"
+  DEFAULT_BUCKET="memoriaviva-clean-data-${PROJECT_ID}"
+else
+  APP_MODE="demo"
+  DEFAULT_SERVICE="memoriaviva-rise"
+  DEFAULT_BUCKET="memoriaviva-data-${PROJECT_ID}"
+fi
+SERVICE_NAME="${CLOUD_RUN_SERVICE:-${DEFAULT_SERVICE}}"
+BUCKET_NAME="${GCS_DATA_BUCKET:-${DEFAULT_BUCKET}}"
 MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-1}"
 TIMEZONE="${MV_TIMEZONE:-America/Mexico_City}"
 
@@ -18,12 +28,12 @@ if [[ -z "${PROJECT_ID}" ]]; then
   exit 1
 fi
 
-echo "==> Proyecto: ${PROJECT_ID} | Región: ${REGION} | Servicio: ${SERVICE_NAME} | min-instances=${MIN_INSTANCES}"
+echo "==> Proyecto: ${PROJECT_ID} | Región: ${REGION} | Modo: ${APP_MODE} | Servicio: ${SERVICE_NAME} | min-instances=${MIN_INSTANCES}"
 echo "==> Verificando bucket de persistencia gs://${BUCKET_NAME} ..."
 gcloud storage buckets describe "gs://${BUCKET_NAME}" >/dev/null 2>&1 || \
   gcloud storage buckets create "gs://${BUCKET_NAME}" --location="${REGION}"
 
-ENV_VARS="MV_DATA_DIR=/app/data,MV_CLOUD_SYNC=1,MV_TIMEZONE=${TIMEZONE},TZ=${TIMEZONE}"
+ENV_VARS="MV_DATA_DIR=/app/data,MV_CLOUD_SYNC=1,MV_APP_MODE=${APP_MODE},MV_TIMEZONE=${TIMEZONE},TZ=${TIMEZONE}"
 if [[ -n "${GEMINI_API_KEY:-}" ]]; then
   ENV_VARS="${ENV_VARS},GEMINI_API_KEY=${GEMINI_API_KEY}"
 fi

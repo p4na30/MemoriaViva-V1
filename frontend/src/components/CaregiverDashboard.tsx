@@ -137,9 +137,11 @@ export const CaregiverDashboard: React.FC<Props> = ({
     setAdminTgUser(state.telegram_status.bot_username || "");
   }, [state.telegram_status.bot_username]);
 
-  // Automatic background polling (3s) when viewing Configuración with pending Telegram UUID
+  // Automatic background polling (3s) on Resumen Clínico & Configuración while Telegram UUID is pending
   useEffect(() => {
-    if (activeTab !== "configuracion" || state.telegram_status.linked) return;
+    if ((activeTab !== "configuracion" && activeTab !== "resumen") || state.telegram_status.linked) {
+      return;
+    }
     const id = window.setInterval(async () => {
       try {
         const res = await api.getTelegramStatus();
@@ -730,8 +732,13 @@ export const CaregiverDashboard: React.FC<Props> = ({
                       alt="QR Telegram"
                       className="w-16 h-16 rounded bg-white p-1 shrink-0"
                     />
-                    <div className="space-y-1 text-xs">
-                      <p className="font-medium">Vincula en 5s ({state.telegram_status.link_code})</p>
+                    <div className="space-y-1 text-xs min-w-0 flex-1">
+                      <p
+                        className="font-medium truncate"
+                        title={state.telegram_status.link_uuid}
+                      >
+                        Vincula en 5s ({state.telegram_status.link_uuid.slice(0, 8)}…)
+                      </p>
                       <div className="flex flex-wrap gap-1.5">
                         <a
                           href={state.telegram_status.deep_link}

@@ -776,6 +776,27 @@ class DatabaseManager:
                 (profile_id,),
             )
 
+    def reassign_telegram_link_profile(
+        self, link_uuid: str, new_profile_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Migrate an existing pending/paired Telegram link to a newly created custom profile."""
+        clean = str(link_uuid or "").strip().lower()
+        if not clean:
+            return None
+        existing = self.get_telegram_link_by_uuid(clean)
+        if not existing or existing.get("status") == "revoked":
+            return None
+        with self._connection(write=True) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_links
+                SET profile_id = ?
+                WHERE LOWER(link_uuid) = ?
+                """,
+                (new_profile_id, clean),
+            )
+        return self.get_telegram_link_by_uuid(clean)
+
     # ------------------------------------------------------------------
     # Bidirectional Family Inbound Messages (Telegram -> Elder Kiosk)
     # ------------------------------------------------------------------
@@ -844,9 +865,10 @@ class DatabaseManager:
             return out
 
     def ack_inbound_message(self, msg_id: int) -> None:
+        """Mark inbound message delivered and purge base64 MP3 payload to keep SQLite/GCS compact."""
         with self._connection(write=True) as conn:
             conn.execute(
-                "UPDATE family_inbound_messages SET delivered_to_kiosk = 1 WHERE id = ?",
+                "UPDATE family_inbound_messages SET delivered_to_kiosk = 1, audio_data_uri = NULL WHERE id = ?",
                 (int(msg_id),),
             )
 

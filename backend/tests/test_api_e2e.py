@@ -299,10 +299,45 @@ def test_telegram_uuid_multiuser_isolation_and_bidirectional_kiosk(tmp_path: Pat
     assert "pan dulce" in msgs[0]["text_content"]
     assert msgs[1]["message_type"] == "photo"
 
-    # Ack both messages
+    # Ack both messages and verify audio_data_uri is purged to keep SQLite compact
     for m in msgs:
         assert client.post(f"/api/kiosk/inbound/{m['id']}/ack").status_code == 200
     assert client.get("/api/kiosk/inbound").json()["messages"] == []
+    with db._connection(write=False) as conn:
+        row = conn.execute(
+            "SELECT audio_data_uri FROM family_inbound_messages WHERE id = ?", (msgs[0]["id"],)
+        ).fetchone()
+        assert row["audio_data_uri"] is None
+
+    # Long inbound text (>280 chars) is truncated cleanly
+    long_msg = "A" * 420
+    r_long = tg.process_incoming_update(
+        {"message": {"chat": {"id": 55501}, "from": {"first_name": "Sofía"}, "text": long_msg}},
+        storage=storage,
+        tts_enabled=False,
+    )
+    assert r_long["action"] == "inbound_text"
+    assert len(r_long["inbound_message"]["text_content"]) < 320
+    assert r_long["inbound_message"]["text_content"].endswith("…")
+
+    # discover_chat_id must NOT call getUpdates when background poll thread is alive (prevents HTTP 409)
+    class AliveDummyThread:
+        def is_alive(self) -> bool:
+            return True
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
+    tg._poll_thread = AliveDummyThread()  # type: ignore[assignment]
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("getUpdates must not be called while listener thread is alive!")
+
+    import backend.telegram_notifier as tg_mod
+
+    monkeypatch.setattr(tg_mod.requests, "get", fail_if_called)
+    disc = tg.discover_chat_id(link_uuid, storage=storage)
+    assert disc["found"] is True
+    assert disc["chat_id"] == "55501"
+    tg._poll_thread = None
 
     # 6. Regenerate UUID revokes old link and creates fresh pending UUID v4
     r_regen = client.post("/api/telegram/regenerate-uuid")
@@ -311,3 +346,40 @@ def test_telegram_uuid_multiuser_isolation_and_bidirectional_kiosk(tmp_path: Pat
     assert new_st["link_uuid"] != link_uuid
     assert uuid.UUID(new_st["link_uuid"]).version == 4
     assert new_st["status"] == "pending"
+
+
+def test_manual_onboarding_preserves_step2_telegram_pairing(tmp_path: Path, monkeypatch) -> None:
+    """Verify pairing Telegram in Step 2 is migrated to the new custom profile on Onboarding finish."""
+    monkeypatch.setenv("MV_DISABLE_TG_POLLING", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    client = _build_test_client(tmp_path)
+    init_uuid = client.get("/api/telegram/status").json()["telegram_status"]["link_uuid"]
+
+    # Step 2: caregiver scans QR and pairs while active profile is still default don_manuel
+    r_pair = client.post(
+        "/api/telegram/webhook",
+        json={"message": {"chat": {"id": 44422}, "from": {"first_name": "Carlos"}, "text": f"/start {init_uuid}"}},
+    )
+    assert r_pair.json()["action"] == "paired"
+
+    # Step 4: finish manual onboarding creating a brand-new profile "Doña Elena"
+    r_onb = client.post(
+        "/api/onboarding/complete",
+        json={
+            "use_demo_persona": False,
+            "nombre_completo": "Elena Morales Ruiz",
+            "nombre_preferido": "Doña Elena",
+            "caregiver_name": "Carlos Morales",
+            "caregiver_username": "carlos.m",
+            "pin": "5678",
+            "consent_accepted": True,
+        },
+    )
+    assert r_onb.status_code == 200
+    tg_after = r_onb.json()["state"]["telegram_status"]
+    assert tg_after["status"] == "paired"
+    assert tg_after["link_uuid"] == init_uuid
+    assert tg_after["chat_id"] == "44422"
+    assert tg_after["linked_user_name"] == "Carlos"

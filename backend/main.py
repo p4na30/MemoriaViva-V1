@@ -236,6 +236,8 @@ def create_app(
     @app.post("/api/onboarding/complete")
     def complete_onboarding(req: OnboardingCompleteRequest) -> Dict[str, Any]:
         cfg = storage.load_account_config()
+        was_registered = bool(cfg.get("is_registered"))
+        prev_link_uuid = str(cfg.get("telegram_link_code") or "").strip()
 
         if req.use_demo_persona:
             pid = "don_manuel"
@@ -312,6 +314,12 @@ def create_app(
         cfg["kiosk_locked"] = bool(req.launch_kiosk)
         cfg["consent_caregiver_accepted"] = bool(req.consent_accepted)
         cfg["consent_caregiver_at"] = datetime.now(timezone.utc).isoformat()
+        # Preserve Step 2 Telegram pairing when completing initial manual onboarding for a new custom profile
+        if not req.use_demo_persona and not was_registered and prev_link_uuid:
+            migrated = db.reassign_telegram_link_profile(prev_link_uuid, pid)
+            if migrated and migrated.get("status") == "paired" and migrated.get("chat_id"):
+                profile.setdefault("contacto_emergencia_telegram", {})["chat_id"] = migrated["chat_id"]
+                storage.save_profile(profile, pid)
         tg_link = storage.ensure_telegram_link(pid)
         cfg["telegram_link_code"] = tg_link["link_uuid"]
         if tg_link.get("status") == "paired" and tg_link.get("chat_id"):

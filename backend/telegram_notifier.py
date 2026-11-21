@@ -41,6 +41,7 @@ class TelegramNotifier:
         self.db = db or DatabaseManager()
         self._cached_bot_username: str = get_telegram_bot_username()
         self._last_update_id: int = 0
+        self._updates_lock = threading.Lock()
         self._poll_stop_event = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
 
@@ -258,8 +259,11 @@ class TelegramNotifier:
                 str(best_photo.get("file_id") or "")
             )
             if raw_bytes:
+                short_caption = (
+                    caption[:280].rstrip() + "…" if len(caption) > 280 else caption
+                )
                 photo_title = f"Foto enviada por {sender}"
-                photo_caption = caption or f"Recuerdo recién compartido por {sender} desde Telegram."
+                photo_caption = short_caption or f"Recuerdo recién compartido por {sender} desde Telegram."
                 saved = storage.save_uploaded_photo(
                     original_filename=f"telegram_{sender}.jpg",
                     raw_bytes=raw_bytes,
@@ -270,7 +274,7 @@ class TelegramNotifier:
                 )
                 spoken_text = (
                     f"{elder_name}, {sender} le acaba de enviar una nueva foto familiar. "
-                    + (f"Dice: {caption}" if caption else "Mire qué bonito recuerdo llegó a su marco.")
+                    + (f"Dice: {short_caption}" if short_caption else "Mire qué bonito recuerdo llegó a su marco.")
                 )
                 audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
                 inbound = self.db.insert_inbound_family_message(
@@ -304,7 +308,8 @@ class TelegramNotifier:
 
         # Subcase 2B: Family sent a Text Message
         if text:
-            spoken_text = f"Recado cariñoso de {sender}: {text}"
+            short_text = text[:280].rstrip() + "…" if len(text) > 280 else text
+            spoken_text = f"Recado cariñoso de {sender}: {short_text}"
             audio_uri = synthesize_elder_voice(spoken_text, voice_gender=voice_gender, enabled=tts_enabled)
             inbound = self.db.insert_inbound_family_message(
                 profile_id=pid,
@@ -319,7 +324,7 @@ class TelegramNotifier:
                 profile_id=pid,
                 level=1,
                 title=f"Recado de {sender} -> Kiosco",
-                message=text,
+                message=short_text,
                 delivered=True,
                 channel_status="delivered_telegram",
             )
@@ -337,50 +342,57 @@ class TelegramNotifier:
         return {"handled": False, "action": "unsupported_message_type"}
 
     def discover_chat_id(self, link_uuid: str, storage: Any = None) -> Dict[str, Any]:
-        """Poll /getUpdates on demand with STRICT UUID v4 matching (never hijacks unrelated users)."""
+        """Check pairing status by strict UUID v4 without triggering HTTP 409 getUpdates collisions.
+
+        If the background polling thread is alive, read directly from SQLite (updated continuously
+        by the listener). Only call getUpdates (under _updates_lock) when background polling is off.
+        """
         if not self.bot_token:
             return {
                 "found": False,
                 "chat_id": "",
                 "detail": "Configura TELEGRAM_BOT_TOKEN en .env o en Configuración Avanzada para vincular un celular real.",
             }
-        try:
-            params: Dict[str, Any] = {"limit": 30}
-            if self._last_update_id > 0:
-                params["offset"] = self._last_update_id + 1
-            resp = requests.get(self._api_url("getUpdates"), params=params, timeout=8)
-            data = resp.json()
-            if not resp.ok or not data.get("ok"):
-                return {
-                    "found": False,
-                    "chat_id": "",
-                    "detail": data.get("description", "No se pudo consultar getUpdates"),
-                }
 
-            updates = data.get("result") or []
-            for upd in updates:
-                uid = int(upd.get("update_id", 0))
-                if uid > self._last_update_id:
-                    self._last_update_id = uid
-                if storage is not None:
-                    self.process_incoming_update(upd, storage=storage)
+        listener_alive = bool(self._poll_thread and self._poll_thread.is_alive())
+        if not listener_alive:
+            try:
+                with self._updates_lock:
+                    params: Dict[str, Any] = {"limit": 30}
+                    if self._last_update_id > 0:
+                        params["offset"] = self._last_update_id + 1
+                    resp = requests.get(self._api_url("getUpdates"), params=params, timeout=8)
+                    data = resp.json()
+                    if not resp.ok or not data.get("ok"):
+                        return {
+                            "found": False,
+                            "chat_id": "",
+                            "detail": data.get("description", "No se pudo consultar getUpdates"),
+                        }
+                    updates = data.get("result") or []
+                    for upd in updates:
+                        uid = int(upd.get("update_id", 0))
+                        if uid > self._last_update_id:
+                            self._last_update_id = uid
+                        if storage is not None:
+                            self.process_incoming_update(upd, storage=storage)
+            except Exception as exc:
+                return {"found": False, "chat_id": "", "detail": f"Error de red: {exc}"}
 
-            link = self.db.get_telegram_link_by_uuid(link_uuid)
-            if link and link.get("status") == "paired" and link.get("chat_id"):
-                who = link.get("telegram_first_name") or "Familiar"
-                return {
-                    "found": True,
-                    "chat_id": link["chat_id"],
-                    "user_label": who,
-                    "detail": f"Vinculado automáticamente con {who} (UUID {link_uuid[:8]}...).",
-                }
+        link = self.db.get_telegram_link_by_uuid(link_uuid)
+        if link and link.get("status") == "paired" and link.get("chat_id"):
+            who = link.get("telegram_first_name") or "Familiar"
             return {
-                "found": False,
-                "chat_id": "",
-                "detail": "Esperando escaneo del QR único. Abre el enlace en Telegram y pulsa Iniciar.",
+                "found": True,
+                "chat_id": link["chat_id"],
+                "user_label": who,
+                "detail": f"Vinculado automáticamente con {who} (UUID {link_uuid[:8]}...).",
             }
-        except Exception as exc:
-            return {"found": False, "chat_id": "", "detail": f"Error de red: {exc}"}
+        return {
+            "found": False,
+            "chat_id": "",
+            "detail": "Esperando escaneo del QR único. Abre el enlace en Telegram y pulsa Iniciar.",
+        }
 
     # ------------------------------------------------------------------
     # Background Long-Polling Listener Thread (Zero-Click Pairing + Inbound)
@@ -400,13 +412,15 @@ class TelegramNotifier:
                     self._poll_stop_event.wait(5.0)
                     continue
                 try:
+                    with self._updates_lock:
+                        offset_val = self._last_update_id + 1 if self._last_update_id > 0 else 0
                     params: Dict[str, Any] = {
                         "timeout": 15,
                         "limit": 20,
                         "allowed_updates": '["message"]',
                     }
-                    if self._last_update_id > 0:
-                        params["offset"] = self._last_update_id + 1
+                    if offset_val > 0:
+                        params["offset"] = offset_val
                     resp = requests.get(self._api_url("getUpdates"), params=params, timeout=22)
                     if resp.status_code == 409:
                         # Webhook is configured on this bot; yield cleanly without spamming
@@ -416,8 +430,9 @@ class TelegramNotifier:
                     if resp.ok and data.get("ok"):
                         for upd in data.get("result") or []:
                             uid = int(upd.get("update_id", 0))
-                            if uid > self._last_update_id:
-                                self._last_update_id = uid
+                            with self._updates_lock:
+                                if uid > self._last_update_id:
+                                    self._last_update_id = uid
                             try:
                                 self.process_incoming_update(upd, storage=storage)
                             except Exception:

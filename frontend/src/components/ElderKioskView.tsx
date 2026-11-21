@@ -171,6 +171,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
 
   const applyTurnResult = useCallback(
     (res: TurnResponse) => {
+      setFamilyBanner(null);
       setReplyText(res.assistant_reply);
       setLastAudioUri(res.audio_data_uri || null);
       setEmergencyActive(Boolean(res.emergency_triggered));
@@ -294,6 +295,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       chunksRef.current = [];
       transcriptRef.current = "";
       setLiveTranscript("");
+      setFamilyBanner(null);
       setEmergencyActive(false);
 
       const preferredMime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -419,6 +421,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
 
   const handleTalkAboutPhoto = async () => {
     if (!currentPhoto || isProcessing || isListening) return;
+    setFamilyBanner(null);
     setIsProcessing(true);
     try {
       const res = await api.submitTurn({

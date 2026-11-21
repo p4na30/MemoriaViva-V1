@@ -76,6 +76,7 @@ export const api = {
     custom_text?: string;
     photo_filename?: string;
     current_photo_filename?: string;
+    last_assistant_reply?: string;
     skip_tts?: boolean;
   }) =>
     requestJson<TurnResponse>(

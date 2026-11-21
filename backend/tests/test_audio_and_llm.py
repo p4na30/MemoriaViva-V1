@@ -440,6 +440,37 @@ def test_geriatric_warmth_dignity_and_medical_safety_guardrail() -> None:
     assert "acuerdan" not in sanitized_plural.lower()
     assert "¿Se acuerda " in sanitized_plural
 
+    # 6. Active photo + pending question are injected into master prompt and deterministic visual question reply
+    from backend.llm_companion import build_master_prompt
+
+    active_photo = {
+        "filename": "01_ferrocarril_locomotora.jpg",
+        "title": "Estación de Trenes de Guadalajara",
+        "caption": "Locomotora diésel saliendo al amanecer de los patios ferroviarios de Guadalajara en los años 70.",
+        "theme": "ferrocarril",
+    }
+    prompt_str = build_master_prompt(
+        profile=profile,
+        recent_history=[],
+        user_text="¿Qué es lo que estamos viendo exactamente?",
+        repetition_info={"is_repetition": False},
+        active_photo=active_photo,
+        last_assistant_reply="Mire qué postal tan especial de Estación de Trenes de Guadalajara, Don Manuel.",
+    )
+    assert "Estación de Trenes de Guadalajara" in prompt_str
+    assert "Locomotora diésel" in prompt_str
+    assert "Última intervención/pregunta de MemoriaViva en pantalla" in prompt_str
+
+    vis_reply = generate_companion_response(
+        user_text="¿Qué es lo que estamos viendo exactamente?",
+        profile=profile,
+        recent_history=[],
+        repetition_info={"is_repetition": False},
+        active_photo=active_photo,
+    )
+    assert "Estación de Trenes de Guadalajara" in vis_reply["assistant_reply"]
+
+
 
 
 

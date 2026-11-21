@@ -303,6 +303,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         audio_mime: audioBlob?.type,
         browser_transcript: finalTranscript || undefined,
         current_photo_filename: currentPhoto?.filename,
+        last_assistant_reply: replyText,
       });
       applyTurnResult(res);
     } catch (err) {

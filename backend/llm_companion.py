@@ -255,6 +255,8 @@ def build_master_prompt(
     recent_history: Sequence[Dict[str, Any]],
     user_text: str,
     repetition_info: Dict[str, Any],
+    active_photo: Optional[Dict[str, Any]] = None,
+    last_assistant_reply: Optional[str] = None,
 ) -> str:
     """Build the exact MemoriaViva RISE unified gerontological system+turn prompt."""
     paciente = profile.get("paciente", {})
@@ -266,11 +268,28 @@ def build_master_prompt(
         "contacto_emergencia_telegram", {}
     ).get("nombre", "Laura")
 
+    history_list = list(recent_history)[-4:]
     history_lines = []
-    for h in list(recent_history)[-4:]:
+    for h in history_list:
         history_lines.append(f"- {nombre_preferido}: {h.get('user_text', '')}")
         history_lines.append(f"- MemoriaViva: {h.get('assistant_reply', '')}")
+
+    clean_last_reply = (last_assistant_reply or "").strip()
+    last_saved_reply = (history_list[-1].get("assistant_reply", "").strip() if history_list else "")
+    if clean_last_reply and clean_last_reply != last_saved_reply:
+        history_lines.append(f"- Última intervención/pregunta de MemoriaViva en pantalla: {clean_last_reply}")
+
     history_block = "\n".join(history_lines) if history_lines else "(Inicio de sesión)"
+
+    if active_photo:
+        photo_block = (
+            f"FOTOGRAFÍA ACTIVA EN PANTALLA DEL KIOSCO AHORA MISMO:\n"
+            f"- Título: \"{active_photo.get('title', '')}\"\n"
+            f"- Descripción visual: \"{active_photo.get('caption', '')}\"\n"
+            f"- Tema: {active_photo.get('theme', 'familia_hogar')}\n"
+        )
+    else:
+        photo_block = "FOTOGRAFÍA ACTIVA EN PANTALLA DEL KIOSCO: (Sin fotografía seleccionada)\n"
 
     rep_context = (
         "REPETICIÓN DETECTADA: Responde con entusiasmo genuino como si fuera la primera vez "
@@ -291,13 +310,13 @@ CONTEXTO BIOGRÁFICO ACTUAL DE {nombre_preferido} (ÚSALO SOLO COMO APOYO O SI �
 HISTORIAL RECIENTE DE LA CONVERSACIÓN ACTUAL:
 {history_block}
 
-ESTADO DE REPETICIÓN EN ESTE TURNO: {rep_context}
+{photo_block}ESTADO DE REPETICIÓN EN ESTE TURNO: {rep_context}
 
 MENSAJE ACTUAL DE {nombre_preferido}:
 "{user_text}"
 
 REGLAS INQUEBRANTABLES DEL MARCO RISE PARA `assistant_reply`:
-1. TONO CÁLIDO, SINGULAR Y CONVERSACIÓN REAL: Habla siempre de "usted" en SINGULAR a {nombre_preferido} ("¿Se acuerda usted...?", "¿Qué recuerda...?"; PROHIBIDO usar plural "¿Se acuerdan...?"). Responde SIEMPRE de forma directa a lo que {nombre_preferido} acaba de decir sin cambiar de tema al azar.
+1. TONO CÁLIDO, SINGULAR, CONTINUIDAD DEL HILO Y ANCLAJE VISUAL: Habla siempre de "usted" en SINGULAR a {nombre_preferido} ("¿Se acuerda usted...?", "¿Qué recuerda...?"; PROHIBIDO usar plural "¿Se acuerdan...?"). Responde SIEMPRE de forma directa a lo que {nombre_preferido} acaba de decir y mantén el hilo con la última intervención/pregunta de MemoriaViva en pantalla. Si pregunta "¿qué estamos viendo?", "¿qué es esa foto?" o da una respuesta breve, usa el Título y Descripción visual de la FOTOGRAFÍA ACTIVA EN PANTALLA para describirla con precisión y calidez.
 2. BREVEDAD Y CLARIDAD GERIÁTRICA: `assistant_reply` NUNCA debe superar las 35 palabras (máximo 2 o 3 oraciones cortas). Haz SIEMPRE UNA SOLA pregunta natural relacionada con lo que acaba de contar (salvo en crisis).
 3. RESCATE BIOGRÁFICO Y DUELO SIN CLICHÉS: Si {nombre_preferido} titubea o no recuerda un nombre, proporciónaselo con cariño. PROHIBIDO decir "¿No se acuerda?" o "Ya me lo había dicho". Si menciona o extraña a un familiar finado en el perfil (ej. Doña Carmen), NO confirmes ni niegues su fallecimiento y PROHIBIDO decir "vive en su corazón", "sigue viva en su memoria" o "desde el cielo"; valida su emoción con ternura.
 4. PACIENCIA INFINITA ANTE REPETICIONES: Si {nombre_preferido} cuenta la misma historia otra vez, escúchalo con ilusión como si fuera la primera vez y pídele un detalle sensorial nuevo. PROHIBIDO decir "otra vez", "de nuevo" o insinuar que lo repitió.
@@ -329,6 +348,7 @@ def _deterministic_fallback_reply(
     profile: Dict[str, Any],
     repetition_info: Dict[str, Any],
     demo_scenario_id: Optional[str] = None,
+    active_photo: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """High-craft deterministic gerontological fallback (works 100% offline/without API key)."""
     paciente = profile.get("paciente", {})
@@ -426,6 +446,43 @@ def _deterministic_fallback_reply(
             if "reloj" in low
             else [],
             "memory_album_theme": "ferrocarril",
+            "engine_used": "deterministic_fallback",
+        }
+
+    # 3B. Direct question about the currently displayed photo ("¿qué estamos viendo?", "¿qué es esta foto?")
+    if active_photo and any(
+        q in low
+        for q in (
+            "qué estamos viendo",
+            "que estamos viendo",
+            "qué es lo que estamos viendo",
+            "que es lo que estamos viendo",
+            "qué es esta foto",
+            "que es esta foto",
+            "qué se ve",
+            "que se ve",
+            "qué foto es",
+            "que foto es",
+        )
+    ):
+        p_title = active_photo.get("title", "esta postal familiar")
+        p_cap = (active_photo.get("caption") or "").rstrip(".")
+        p_theme = active_photo.get("theme", "familia_hogar")
+        desc = f"{p_title}: {p_cap.lower()}" if p_cap else p_title
+        reply = enforce_word_limit(
+            f"Estamos viendo {desc}, {nombre}. ¿Qué recuerdo le viene a la mente al mirar esta imagen?"
+        )
+        return {
+            "assistant_reply": reply,
+            "emotional_state": "tranquilo",
+            "emergency_triggered": False,
+            "emergency_reason": None,
+            "biographical_rescue_triggered": False,
+            "rescued_entity": None,
+            "conversation_topic_summary": f"Conversó sobre los detalles visuales de la postal '{p_title}'.",
+            "dinner_conversation_tip": f"Comenta con {nombre} {moment_phrase} los detalles de la fotografía '{p_title}'.",
+            "new_biographical_facts": [],
+            "memory_album_theme": p_theme if p_theme in MEMORY_ALBUM_THEMES else "familia_hogar",
             "engine_used": "deterministic_fallback",
         }
 
@@ -539,6 +596,8 @@ def generate_companion_response(
     recent_history: Sequence[Dict[str, Any]],
     repetition_info: Dict[str, Any],
     demo_scenario_id: Optional[str] = None,
+    active_photo: Optional[Dict[str, Any]] = None,
+    last_assistant_reply: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Invoke Gemini fallback chain (max 2 models, 6s timeout each, 0 RPD on obvious crisis)."""
     low = user_text.lower()
@@ -551,6 +610,7 @@ def generate_companion_response(
             profile=profile,
             repetition_info=repetition_info,
             demo_scenario_id=demo_scenario_id or "demo_3_crisis",
+            active_photo=active_photo,
         )
         if get_gemini_api_key():
             chain = get_gemini_model_chain()
@@ -561,7 +621,14 @@ def generate_companion_response(
 
     if get_gemini_api_key():
         try:
-            prompt = build_master_prompt(profile, recent_history, user_text, repetition_info)
+            prompt = build_master_prompt(
+                profile=profile,
+                recent_history=recent_history,
+                user_text=user_text,
+                repetition_info=repetition_info,
+                active_photo=active_photo,
+                last_assistant_reply=last_assistant_reply,
+            )
             raw_json, used_model = _call_gemini_with_fallback(
                 contents=prompt,
                 response_schema=CompanionStructuredOutput,
@@ -579,7 +646,11 @@ def generate_companion_response(
                     demo_scenario_id=demo_scenario_id,
                 )
                 if parsed["memory_album_theme"] not in MEMORY_ALBUM_THEMES:
-                    parsed["memory_album_theme"] = infer_visual_theme(user_text)
+                    parsed["memory_album_theme"] = (
+                        active_photo.get("theme")
+                        if (active_photo and active_photo.get("theme") in MEMORY_ALBUM_THEMES)
+                        else infer_visual_theme(user_text)
+                    )
                 if is_obvious_crisis or parsed.get("emergency_triggered"):
                     parsed["emergency_triggered"] = True
                     parsed["emotional_state"] = "crisis_desorientacion"
@@ -590,6 +661,7 @@ def generate_companion_response(
                             profile=profile,
                             repetition_info=repetition_info,
                             demo_scenario_id="demo_3_crisis",
+                            active_photo=active_photo,
                         )
                         parsed["assistant_reply"] = safe_feil["assistant_reply"]
                 parsed["engine_used"] = used_model
@@ -604,23 +676,42 @@ def generate_companion_response(
         profile=profile,
         repetition_info=repetition_info,
         demo_scenario_id=demo_scenario_id,
+        active_photo=active_photo,
     )
 
 
-def generate_photo_starter(photo: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
+def generate_photo_starter(
+    photo: Dict[str, Any],
+    profile: Dict[str, Any],
+    recent_history: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Generate a warm Foto -> Voz reminiscence prompt for the currently displayed postcard."""
     nombre = profile.get("paciente", {}).get("nombre_preferido", "Don Manuel")
     title = photo.get("title", "esta fotografía")
     caption = photo.get("caption", "")
     theme = photo.get("theme", "familia_hogar")
 
+    recent_list = list(recent_history or [])[-2:]
+    recent_ctx = ""
+    if recent_list:
+        lines = []
+        for h in recent_list:
+            lines.append(f"- {nombre}: {h.get('user_text', '')}")
+            lines.append(f"- MemoriaViva: {h.get('assistant_reply', '')}")
+        recent_ctx = (
+            "\nContexto de lo que venían platicando justo antes:\n"
+            + "\n".join(lines)
+            + "\nConecta con naturalidad lo que venían platicando con esta imagen sin reiniciar bruscamente la charla. "
+        )
+
     if get_gemini_api_key():
         try:
             prompt = (
-                f"Eres MemoriaViva, compañero cálido para {nombre}. "
-                f"Está viendo en su marco digital la foto '{title}' ({caption}). "
-                "Escribe un saludo breve y cariñoso (máximo 28 palabras) con UNA SOLA pregunta "
-                "abierta para invitarlo a recordar esa imagen sin presionarlo. Solo texto plano."
+                f"Eres MemoriaViva, compañero cálido para {nombre} (háblale siempre de 'usted' en singular). "
+                f"Está viendo en su marco digital la foto '{title}' ({caption})."
+                f"{recent_ctx}"
+                "Escribe un comentario breve y cariñoso sobre lo que se ve en esta foto (máximo 28 palabras) "
+                "con UNA SOLA pregunta abierta para invitarlo a seguir recordando sin presionarlo. Solo texto plano."
             )
             raw_text, used_model = _call_gemini_with_fallback(
                 contents=prompt,

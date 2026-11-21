@@ -93,6 +93,7 @@ class TurnRequest(BaseModel):
     custom_text: Optional[str] = None
     photo_filename: Optional[str] = None
     current_photo_filename: Optional[str] = None
+    last_assistant_reply: Optional[str] = None
     skip_tts: bool = False
 
 
@@ -419,15 +420,25 @@ def create_app(
         profile = storage.load_profile(pid)
         elder_name = profile["paciente"]["nombre_preferido"]
 
-        # Branch A: Foto -> Voz (Initiate reminiscence about the currently visible photo)
+        photos_for_turn = storage.list_photos(pid)
+        active_photo = next(
+            (
+                p
+                for p in photos_for_turn
+                if p["filename"] in (req.current_photo_filename, req.photo_filename)
+            ),
+            photos_for_turn[0] if photos_for_turn else None,
+        )
+
+        # Branch A: Foto -> Voz (Initiate or continue reminiscence about the currently visible photo)
         if req.photo_filename and not (
             req.audio_base64 or req.browser_transcript or req.demo_scenario_id or req.custom_text
         ):
-            photos = storage.list_photos(pid)
-            photo = next((p for p in photos if p["filename"] == req.photo_filename), None)
+            photo = next((p for p in photos_for_turn if p["filename"] == req.photo_filename), None)
             if not photo:
                 raise HTTPException(status_code=404, detail="Fotografía no encontrada en el álbum.")
-            starter = generate_photo_starter(photo, profile)
+            recent_for_photo = list(reversed(db.get_recent_turns(pid, limit=3)))
+            starter = generate_photo_starter(photo, profile, recent_history=recent_for_photo)
             audio_uri = synthesize_elder_voice(
                 starter["assistant_reply"],
                 voice_gender=cfg.get("voice_gender", "male"),
@@ -527,13 +538,15 @@ def create_app(
         rep_res = compute_semantic_repetition(transcript, prev_utterances)
         circadian = classify_circadian_period()
 
-        # 2. Gerontological Companion (Gemini 2.5 Flash or Deterministic Fallback)
+        # 2. Gerontological Companion (Gemini Flash or Deterministic Fallback)
         llm_res = generate_companion_response(
             user_text=transcript,
             profile=profile,
             recent_history=list(reversed(recent_turns))[-4:],
             repetition_info=rep_res,
             demo_scenario_id=req.demo_scenario_id,
+            active_photo=active_photo,
+            last_assistant_reply=req.last_assistant_reply,
         )
 
         # 3. Biographical RAG-Lite persistence

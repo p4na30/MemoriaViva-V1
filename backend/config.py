@@ -99,12 +99,10 @@ def get_local_now() -> datetime:
     return datetime.now(get_local_timezone())
 
 
-# LLM Configuration (verified fast fallback chain with thinking disabled + 404 circuit breaker)
+# LLM Configuration (verified fast 2-model fallback chain with thinking disabled + 404 circuit breaker)
 GEMINI_MODEL_COMPANION: str = os.getenv("GEMINI_MODEL_COMPANION", "gemini-3.5-flash-lite")
 GEMINI_MODEL_FALLBACK_CHAIN: List[str] = [
     "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
     "gemini-flash-latest",
 ]
 MAX_ASSISTANT_WORDS: int = 35
@@ -167,7 +165,7 @@ CONFOUNDING_FACTORS: List[Dict[str, str]] = [
 # Notre Dame Global RISE AI Hackathon — Official "Identify Your Tools" Catalog
 AI_TOOLS_DISCLOSURE: List[Dict[str, str]] = [
     {
-        "tool": "Google Gemini (gemini-3.5-flash-lite → gemini-3.8-flash → gemini-3.7-flash → respaldo local)",
+        "tool": "Google Gemini (gemini-3.5-flash-lite → gemini-flash-latest → respaldo local)",
         "category": "Generación Conversacional & STT Multimodal Fallback",
         "role": "Cadena automática de respaldo con circuit-breaker anti-404 y thinking desactivado (thinking_budget=0) para respuestas ágiles y mínimo gasto de tokens: conduce Terapia de Reminiscencia (≤35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
         "privacy_and_limits": "Sin diagnóstico médico ni consejos farmacológicos. Audio enviado solo en RAM si hace falta STT, 0 bytes almacenados; respaldo local determinista si no hay red.",

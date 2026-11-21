@@ -244,18 +244,36 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
     setIsListening(false);
     setIsProcessing(true);
 
+    // Wait 200ms before stopping SpeechRecognition so the browser flushes the final spoken words
+    await new Promise((r) => window.setTimeout(r, 200));
+
     const recorder = mediaRecorderRef.current;
     const stopPromise = new Promise<Blob | null>((resolve) => {
+      let settled = false;
+      const finish = (blob: Blob | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(blob);
+      };
+      // Hard 700ms timeout so MediaRecorder.stop() can never hang "Pensando una respuesta cálida..."
+      const fallbackTimer = window.setTimeout(() => {
+        const mime = recorder?.mimeType || "audio/webm";
+        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: mime }) : null;
+        finish(blob);
+      }, 700);
+
       if (!recorder || recorder.state === "inactive") {
+        window.clearTimeout(fallbackTimer);
         const fallbackBlob =
           chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: "audio/webm" }) : null;
-        resolve(fallbackBlob);
+        finish(fallbackBlob);
         return;
       }
       recorder.onstop = () => {
+        window.clearTimeout(fallbackTimer);
         const mime = recorder.mimeType || "audio/webm";
         const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: mime }) : null;
-        resolve(blob);
+        finish(blob);
       };
       try {
         if (recorder.state === "recording") {
@@ -263,9 +281,10 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         }
         recorder.stop();
       } catch {
+        window.clearTimeout(fallbackTimer);
         const fallbackBlob =
           chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: "audio/webm" }) : null;
-        resolve(fallbackBlob);
+        finish(fallbackBlob);
       }
     });
 
@@ -287,13 +306,19 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       });
       applyTurnResult(res);
     } catch (err) {
-      notify(err instanceof Error ? err.message : "No se pudo procesar el turno de voz.", "error");
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Tiempo de espera") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+        setReplyText(
+          `Qué gusto escucharle, ${elderName}. Cuénteme un poquito más de ese recuerdo cuando guste.`
+        );
+      }
+      notify(msg || "No se pudo procesar el turno de voz.", "error");
     } finally {
       setIsProcessing(false);
       setLiveTranscript("");
       transcriptRef.current = "";
     }
-  }, [cleanupCaptureResources, currentPhoto?.filename, applyTurnResult, notify]);
+  }, [cleanupCaptureResources, currentPhoto?.filename, applyTurnResult, notify, elderName]);
 
   const startListening = useCallback(async () => {
     if (listeningRef.current || isProcessing || pinModalOpen) return;
@@ -519,6 +544,24 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       window.removeEventListener("keyup", onKeyUp);
     };
   }, [pinModalOpen, voiceMode, isDemoKiosk, startListening, stopListeningAndSubmit, handleRunDemoAct]);
+
+  // Global release listener for Hold-to-Talk so the z-30 aura overlay never traps pointerup/touchend
+  useEffect(() => {
+    if (!isListening || voiceMode !== "hold_ptt") return;
+    const onGlobalRelease = () => {
+      if (listeningRef.current) {
+        stopListeningAndSubmit();
+      }
+    };
+    window.addEventListener("pointerup", onGlobalRelease);
+    window.addEventListener("pointercancel", onGlobalRelease);
+    window.addEventListener("touchend", onGlobalRelease);
+    return () => {
+      window.removeEventListener("pointerup", onGlobalRelease);
+      window.removeEventListener("pointercancel", onGlobalRelease);
+      window.removeEventListener("touchend", onGlobalRelease);
+    };
+  }, [isListening, voiceMode, stopListeningAndSubmit]);
 
   useEffect(() => () => cleanupCaptureResources(), [cleanupCaptureResources]);
 
@@ -792,7 +835,9 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
                   className="px-6 py-3.5 rounded-xl font-semibold text-base flex items-center gap-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition shadow-lg touch-none"
                 >
                   <Hand className="w-5 h-5" />
-                  Mantén presionado (o ESPACIO)
+                  <span>
+                    Mantén presionado <span className="hidden lg:inline">(o ESPACIO)</span>
+                  </span>
                 </button>
               )}
 

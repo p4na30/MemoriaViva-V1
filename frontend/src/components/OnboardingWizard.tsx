@@ -265,7 +265,7 @@ export const OnboardingWizard: React.FC<Props> = ({
   const progressPct = Math.min(100, Math.round((photoCount / minPhotos) * 100));
 
   return (
-    <div className="min-h-screen py-8 px-4 flex flex-col items-center">
+    <div className="min-h-screen py-5 sm:py-8 px-3 sm:px-4 safe-top safe-bottom flex flex-col items-center">
       <div className="w-full max-w-2xl space-y-6">
         {/* Top Bar */}
         <header className="flex flex-wrap items-center justify-between gap-3">
@@ -716,7 +716,7 @@ export const OnboardingWizard: React.FC<Props> = ({
               </div>
 
               {photos.length > 0 && (
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                   {photos.slice(0, 10).map((p) => (
                     <div key={p.filename} className="relative aspect-[4/3] rounded-lg overflow-hidden border" style={{ borderColor: "var(--border)" }}>
                       <img src={apiUrl(p.url)} alt={p.title} className="w-full h-full object-cover" />

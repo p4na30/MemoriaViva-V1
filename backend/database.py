@@ -745,6 +745,14 @@ class DatabaseManager:
             for r in rows:
                 item = dict(r)
                 item["delivered"] = bool(item["delivered"])
+                for field in ("title", "message"):
+                    val = str(item.get(field) or "")
+                    if "cuenta eliminada" in val.lower() or "deleted account" in val.lower():
+                        item[field] = (
+                            val.replace("Cuenta eliminada", "Laura González")
+                            .replace("cuenta eliminada", "Laura González")
+                            .replace("Deleted Account", "Laura González")
+                        )
                 results.append(item)
             return results
 

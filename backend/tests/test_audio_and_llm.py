@@ -423,5 +423,23 @@ def test_geriatric_warmth_dignity_and_medical_safety_guardrail() -> None:
     assert "laura" in sanitized_med.lower() or "médico" in sanitized_med.lower()
     assert len(sanitized_med.split()) <= 35
 
+    # 4. Deceased-relative cliché ("vive en su corazón") is blocked and replaced with warm Feil validation
+    raw_grief = "Doña Carmen vive en su corazón para siempre, Don Manuel."
+    sanitized_grief = sanitize_geriatric_reply(
+        raw_grief, "Extraño mucho a mi esposa Carmen", profile, {"is_repetition": False}
+    )
+    assert "corazón" not in sanitized_grief.lower()
+    assert "Doña Carmen" in sanitized_grief
+    assert len(sanitized_grief.split()) <= 35
+
+    # 5. Plural "¿Se acuerdan...?" is normalized to singular "¿Se acuerda...?"
+    raw_plural = "Qué bonito viaje a Manzanillo. ¿Se acuerdan cómo estaba el mar ese día?"
+    sanitized_plural = sanitize_geriatric_reply(
+        raw_plural, "Fuimos a Manzanillo", profile, {"is_repetition": False}
+    )
+    assert "acuerdan" not in sanitized_plural.lower()
+    assert "¿Se acuerda " in sanitized_plural
+
+
 
 

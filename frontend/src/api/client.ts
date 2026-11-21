@@ -7,25 +7,37 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(path), {
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
-  if (!res.ok) {
-    let message = `Error HTTP ${res.status}`;
-    try {
-      const err = await res.json();
-      if (err?.detail) message = String(err.detail);
-    } catch {
-      // ignore parse failure
+async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = 15000): Promise<T> {
+  const controller = new AbortController();
+  const timerId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(apiUrl(path), {
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...(init?.headers || {}),
+      },
+      ...init,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      let message = `Error HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        if (err?.detail) message = String(err.detail);
+      } catch {
+        // ignore parse failure
+      }
+      throw new Error(message);
     }
-    throw new Error(message);
+    return (await res.json()) as T;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Tiempo de espera agotado al conectar con el servidor.");
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timerId);
   }
-  return (await res.json()) as T;
 }
 
 export const api = {
@@ -55,7 +67,7 @@ export const api = {
       audio_data_uri: string | null;
     }>("/api/kiosk/consent-greeting", { method: "POST" }),
 
-  submitTurn: (payload: {
+  submitTurn: async (payload: {
     audio_base64?: string;
     audio_mime?: string;
     browser_transcript?: string;
@@ -65,11 +77,22 @@ export const api = {
     photo_filename?: string;
     current_photo_filename?: string;
     skip_tts?: boolean;
-  }) =>
-    requestJson<TurnResponse>("/api/turn", {
+  }) => {
+    const reqInit: RequestInit = {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
+    };
+    try {
+      return await requestJson<TurnResponse>("/api/turn", reqInit, 15000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      // Automatic 1-time fast retry only on network/timeout errors (never on 4xx validation errors)
+      if (msg.includes("Tiempo de espera") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+        return await requestJson<TurnResponse>("/api/turn", reqInit, 10000);
+      }
+      throw err;
+    }
+  },
 
   createReview: (payload: {
     reviewer_name: string;

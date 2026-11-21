@@ -350,17 +350,25 @@ def transcribe_audio_ram_google_free(wav_bytes: bytes) -> str:
 
 
 def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
-    """Resilient multimodal STT on RAM WAV: tries Gemini fallback chain first, then zero-key es-MX STT.
-
-    Ensures live voice capture works on Android Capacitor WebView, Firefox, Safari, and Chrome
-    even when browser Web SpeechRecognition is unavailable or GEMINI_API_KEY is unset/quota-limited.
+    """Resilient multimodal STT on RAM WAV:
+    1. Runs zero-key es-MX SpeechRecognition in RAM first (~0.4s, 0 RPD / 0 Gemini quota).
+    2. Only if empty and GEMINI_API_KEY is set, tries at most 1 Gemini model with a 6.0s hard timeout.
     """
     if not wav_bytes:
         return ""
 
+    # 1. Fast zero-RPD es-MX STT in RAM first
+    free_text = transcribe_audio_ram_google_free(wav_bytes)
+    if free_text:
+        return free_text
+
+    # 2. Single-model Gemini multimodal fallback (max 1 RPD, 6.0s hard timeout)
     api_key = get_gemini_api_key()
-    if api_key:
+    chain = get_gemini_model_chain()
+    if api_key and chain:
+        model_name = chain[0]
         try:
+            import concurrent.futures
             from google import genai
             from google.genai import types
 
@@ -373,47 +381,28 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
                     "Devuelve únicamente el texto transcrito sin comentarios adicionales."
                 ),
             ]
-            for model_name in get_gemini_model_chain():
-                try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            temperature=0.0,
-                            thinking_config=types.ThinkingConfig(thinking_budget=0),
-                        ),
-                    )
-                    text = (response.text or "").strip()
-                    if text:
-                        return text
-                except Exception as exc:
-                    err_txt = str(exc).upper()
-                    if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
-                        mark_model_unavailable(model_name)
-                        continue
-                    if any(code in err_txt for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "DEADLINE", "TIMEOUT")):
-                        continue
-                    if "THINKING" not in err_txt and "INVALID_ARGUMENT" not in err_txt and "400" not in err_txt:
-                        continue
-                    try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=contents,
-                            config=types.GenerateContentConfig(temperature=0.0),
-                        )
-                        text = (response.text or "").strip()
-                        if text:
-                            return text
-                    except Exception as exc2:
-                        err_txt2 = str(exc2).upper()
-                        if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
-                            mark_model_unavailable(model_name)
-                        continue
-        except Exception:
-            pass
 
-    # Automatic zero-key fallback (SpeechRecognition es-MX in RAM)
-    return transcribe_audio_ram_google_free(wav_bytes)
+            def _call_stt() -> str:
+                resp = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
+                return (resp.text or "").strip()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                text = pool.submit(_call_stt).result(timeout=6.0)
+                if text:
+                    return text
+        except Exception as exc:
+            err_txt = str(exc).upper()
+            if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
+                mark_model_unavailable(model_name)
+
+    return ""
 
 
 _TTS_RAM_CACHE: Dict[tuple[str, str], str] = {}
@@ -450,21 +439,14 @@ def synthesize_elder_voice(
         return cached
 
     try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        import concurrent.futures
 
-        if loop and loop.is_running():
-            # Run coroutine in a dedicated worker thread when called inside FastAPI event loop
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                mp3_bytes = pool.submit(
-                    lambda: asyncio.run(_edge_tts_bytes(text, voice, TTS_RATE, TTS_PITCH))
-                ).result(timeout=12)
-        else:
-            mp3_bytes = asyncio.run(_edge_tts_bytes(text, voice, TTS_RATE, TTS_PITCH))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            mp3_bytes = pool.submit(
+                lambda: asyncio.run(
+                    asyncio.wait_for(_edge_tts_bytes(text, voice, TTS_RATE, TTS_PITCH), timeout=4.0)
+                )
+            ).result(timeout=4.5)
 
         if not mp3_bytes:
             return None

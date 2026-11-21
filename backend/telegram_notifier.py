@@ -39,13 +39,20 @@ def format_emotion_es(raw: str) -> str:
     return EMOTION_LABELS_ES.get(key, key.replace("_", " ").capitalize())
 
 
+def _clean_tg_first_name(raw: str) -> str:
+    clean = (raw or "").strip()
+    if clean.lower() in ("cuenta eliminada", "deleted account", "deleted", "none", "null"):
+        return ""
+    return clean
+
+
 def _resolve_app_caregiver_names(cfg: Dict[str, Any], fallback_first: str = "") -> tuple[str, str]:
     """Return (display_name, voice_first_name) prioritizing the app-configured caregiver name."""
     raw_name = str(cfg.get("caregiver_name") or "").strip()
     if raw_name:
         first_pila = raw_name.split()[0].strip()
         return raw_name, first_pila or "su familiar"
-    fb = fallback_first.strip()
+    fb = _clean_tg_first_name(fallback_first)
     if fb:
         return fb, fb.split()[0].strip() or "su familiar"
     return "Familiar", "su familiar"
@@ -145,7 +152,7 @@ class TelegramNotifier:
         effective_chat = record_chat or chat_id or get_telegram_default_chat_id()
         status = (link_record or {}).get("status") or ("paired" if effective_chat else "pending")
         linked = status == "paired" or bool(effective_chat)
-        linked_user_name = (link_record or {}).get("telegram_first_name") or ""
+        linked_user_name = _clean_tg_first_name((link_record or {}).get("telegram_first_name") or "") or "Familiar"
         return {
             "bot_configured": bool(self.bot_token),
             "bot_username": username,
@@ -199,7 +206,8 @@ class TelegramNotifier:
             return {"handled": False, "action": "missing_chat_id"}
 
         from_user = msg.get("from") or {}
-        first_name = str(from_user.get("first_name") or chat.get("first_name") or "Familiar").strip()
+        raw_tg_first = str(from_user.get("first_name") or chat.get("first_name") or "").strip()
+        first_name = _clean_tg_first_name(raw_tg_first) or "Familiar"
         username = str(from_user.get("username") or chat.get("username") or "").strip()
         text = str(msg.get("text") or "").strip()
         caption = str(msg.get("caption") or "").strip()
@@ -240,7 +248,8 @@ class TelegramNotifier:
                 cfg["telegram_link_code"] = paired["link_uuid"]
                 storage.save_account_config(cfg)
 
-            safe_first = html.escape(first_name)
+            display_owner, _ = _resolve_app_caregiver_names(cfg, fallback_first=first_name)
+            safe_first = html.escape(display_owner)
             safe_elder = html.escape(elder_name)
             self._send_raw_message(
                 chat_id,
@@ -250,7 +259,7 @@ class TelegramNotifier:
             self.db.insert_telegram_log(
                 profile_id=pid,
                 level=1,
-                title=f"Celular vinculado: {first_name}",
+                title=f"Celular vinculado: {display_owner}",
                 message=f"Emparejamiento automático exitoso por UUID ({paired['link_uuid'][:8]}...).",
                 delivered=True,
                 channel_status="delivered_telegram",

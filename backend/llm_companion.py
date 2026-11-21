@@ -33,11 +33,12 @@ def _get_gemini_client(api_key: str) -> Any:
     """Reuse initialized genai.Client per API key to avoid per-turn TLS/client cold start."""
     from google import genai
 
-    client = _GEMINI_CLIENT_CACHE.get(api_key)
+    cache_key = (api_key, id(genai.Client))
+    client = _GEMINI_CLIENT_CACHE.get(cache_key)
     if client is None:
         client = genai.Client(api_key=api_key)
         _GEMINI_CLIENT_CACHE.clear()
-        _GEMINI_CLIENT_CACHE[api_key] = client
+        _GEMINI_CLIENT_CACHE[cache_key] = client
     return client
 
 
@@ -133,6 +134,15 @@ UNSAFE_MEDICAL_REPLY_PATTERNS = [
     r"(?:usted\s+)?tiene\s+(?:alzheimer|demencia|deterioro\s+cognitivo)",
 ]
 
+DECEASED_CLICHE_PATTERNS = [
+    r"vive[n]?\s+en\s+su\s+coraz[oó]n",
+    r"sigue[n]?\s+viv[oa]s?\s+en\s+su\s+(?:coraz[oó]n|memoria)",
+    r"desde\s+el\s+cielo",
+    r"\bfalleci[oó]\b",
+    r"\bmuri[oó]\b",
+    r"ya\s+no\s+est[aá]\s+con\s+nosotros",
+]
+
 
 def _contains_any_pattern(text: str, patterns: Sequence[str]) -> bool:
     low = (text or "").lower()
@@ -146,14 +156,19 @@ def sanitize_geriatric_reply(
     repetition_info: Dict[str, Any],
     demo_scenario_id: Optional[str] = None,
 ) -> str:
-    """Enforce gerontological warmth, dignity, and medical-safety guardrails on LLM text."""
+    """Enforce gerontological warmth, dignity, singular address, Feil grief, and medical-safety guardrails."""
     clean = enforce_word_limit(reply)
+    # Normalize plural "¿Se acuerdan...?" -> singular "¿Se acuerda...?"
+    clean = re.sub(r"\bSe\s+acuerdan\b", "Se acuerda", clean)
+    clean = re.sub(r"\bse\s+acuerdan\b", "se acuerda", clean)
+
     paciente = profile.get("paciente", {})
     red = profile.get("red_familiar_y_afectiva", {})
     nombre = paciente.get("nombre_preferido", "Don Manuel")
     cuidador = red.get("hija_mayor_cuidadora", {}).get("nombre") or profile.get(
         "contacto_emergencia_telegram", {}
     ).get("nombre", "Laura")
+    esposa_raw = str(red.get("esposa_finada") or "Doña Carmen").split("(")[0].strip() or "Doña Carmen"
 
     # 1. Hard block on pharmacological dosing or automated medical diagnosis
     if _contains_any_pattern(clean, UNSAFE_MEDICAL_REPLY_PATTERNS):
@@ -162,7 +177,14 @@ def sanitize_geriatric_reply(
             f"Mejor consúltelo ahorita con {cuidador} o su médico antes de cambiar cualquier toma."
         )
 
-    # 2. Prevent abrupt/shaming repetition callouts (e.g. "¡Otra vez con ellos!", "¿No se acuerda?")
+    # 2. Hard block on deceased-relative clichés ("vive en su corazón", "falleció", "murió")
+    if _contains_any_pattern(clean, DECEASED_CLICHE_PATTERNS):
+        return enforce_word_limit(
+            f"Lo entiendo, {nombre}, qué recuerdos tan profundos y queridos tiene con {esposa_raw}. "
+            "¿Qué momento bonito junto a ella le gusta recordar más?"
+        )
+
+    # 3. Prevent abrupt/shaming repetition callouts (e.g. "¡Otra vez con ellos!", "¿No se acuerda?")
     if _contains_any_pattern(clean, UNDIGNIFIED_REPLY_PATTERNS):
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean) if s.strip()]
         kept = [s for s in sentences if not _contains_any_pattern(s, UNDIGNIFIED_REPLY_PATTERNS)]
@@ -252,9 +274,9 @@ MENSAJE ACTUAL DE {nombre_preferido}:
 "{user_text}"
 
 REGLAS INQUEBRANTABLES DEL MARCO RISE PARA `assistant_reply`:
-1. TONO CÁLIDO Y CONVERSACIÓN REAL: Habla siempre de "usted" con ternura, respeto y paciencia (nunca seco, brusco, sarcástico ni clínico). Responde SIEMPRE de forma directa a lo que {nombre_preferido} acaba de decir sin cambiar de tema al azar.
+1. TONO CÁLIDO, SINGULAR Y CONVERSACIÓN REAL: Habla siempre de "usted" en SINGULAR a {nombre_preferido} ("¿Se acuerda usted...?", "¿Qué recuerda...?"; PROHIBIDO usar plural "¿Se acuerdan...?"). Responde SIEMPRE de forma directa a lo que {nombre_preferido} acaba de decir sin cambiar de tema al azar.
 2. BREVEDAD Y CLARIDAD GERIÁTRICA: `assistant_reply` NUNCA debe superar las 35 palabras (máximo 2 o 3 oraciones cortas). Haz SIEMPRE UNA SOLA pregunta natural relacionada con lo que acaba de contar (salvo en crisis).
-3. RESCATE BIOGRÁFICO SIN EVIDENCIAR OLVIDOS: Si {nombre_preferido} titubea o no recuerda el nombre de un familiar, lugar o fecha que está en su perfil biográfico, proporciónaselo con cariño dentro de la frase. PROHIBIDO decir "¿No se acuerda?", "Se le olvidó" o "Ya me lo había dicho".
+3. RESCATE BIOGRÁFICO Y DUELO SIN CLICHÉS: Si {nombre_preferido} titubea o no recuerda un nombre, proporciónaselo con cariño. PROHIBIDO decir "¿No se acuerda?" o "Ya me lo había dicho". Si menciona o extraña a un familiar finado en el perfil (ej. Doña Carmen), NO confirmes ni niegues su fallecimiento y PROHIBIDO decir "vive en su corazón", "sigue viva en su memoria" o "desde el cielo"; valida su emoción con ternura.
 4. PACIENCIA INFINITA ANTE REPETICIONES: Si {nombre_preferido} cuenta la misma historia otra vez, escúchalo con ilusión como si fuera la primera vez y pídele un detalle sensorial nuevo. PROHIBIDO decir "otra vez", "de nuevo" o insinuar que lo repitió.
 5. PROTOCOLO DE VALIDACIÓN DE FEIL (CRISIS O DESORIENTACIÓN) Y SEGURIDAD MÉDICA: Si expresa miedo, llanto, angustia, dolor físico, mareo o dice que no sabe dónde está:
    - SUSPENDE cualquier pregunta de memoria (0 signos de interrogación).
@@ -272,7 +294,7 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta estructura exacta:
   "biographical_rescue_triggered": false,
   "rescued_entity": null,
   "conversation_topic_summary": "Resumen cálido en 1 línea de lo que platicó hoy",
-  "dinner_conversation_tip": "Sugerencia concreta de 1 pregunta para que {cuidador} le haga hoy en la cena",
+  "dinner_conversation_tip": "Sugerencia en 2a persona para {cuidador} (ej. 'Pregúntale en la cena...' o en crisis 'Llámalo de inmediato con voz serena para acompañarlo.')",
   "new_biographical_facts": ["Frase(s) con datos nuevos que mencionó en este turno"],
   "memory_album_theme": "ferrocarril | musica_boleros | playa_manzanillo | familia_hogar | mascotas"
 }}
@@ -319,7 +341,7 @@ def _deterministic_fallback_reply(
             "biographical_rescue_triggered": False,
             "rescued_entity": None,
             "conversation_topic_summary": "Episodio de desorientación y mareo contenido con Validación de Naomi Feil.",
-            "dinner_conversation_tip": f"Llamar de inmediato a {nombre} con voz serena para acompañarlo y verificar cómo se siente físicamente.",
+            "dinner_conversation_tip": "Llámalo de inmediato con voz serena para acompañarlo y confirmar que se encuentre bien en casa.",
             "new_biographical_facts": [],
             "memory_album_theme": "familia_hogar",
             "engine_used": "deterministic_fallback",
@@ -448,10 +470,11 @@ def _call_gemini_with_fallback(
     if not api_key:
         return "", ""
 
+    import concurrent.futures
     from google.genai import types
 
     client = _get_gemini_client(api_key)
-    for model_name in get_gemini_model_chain():
+    for model_name in get_gemini_model_chain()[:2]:
         config_kwargs: Dict[str, Any] = {
             "temperature": temperature,
             "thinking_config": types.ThinkingConfig(thinking_budget=0),
@@ -461,11 +484,15 @@ def _call_gemini_with_fallback(
             config_kwargs["response_schema"] = response_schema
 
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(**config_kwargs),
-            )
+            def _invoke_once() -> Any:
+                return client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                response = pool.submit(_invoke_once).result(timeout=6.0)
             text = (response.text or "").strip()
             if text:
                 _LAST_GEMINI_DIAGNOSTICS["last_model"] = model_name
@@ -478,33 +505,7 @@ def _call_gemini_with_fallback(
             err_txt = str(exc).upper()
             if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
                 mark_model_unavailable(model_name)
-                continue
-            # Immediately advance to next model on transient overload/quota errors (never re-enable thinking)
-            if any(code in err_txt for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "DEADLINE", "TIMEOUT")):
-                continue
-            # Only retry without thinking_config if the model explicitly rejected thinking_budget=0
-            if "THINKING" not in err_txt and "INVALID_ARGUMENT" not in err_txt and "400" not in err_txt:
-                continue
-            try:
-                config_kwargs.pop("thinking_config", None)
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(**config_kwargs),
-                )
-                text = (response.text or "").strip()
-                if text:
-                    _LAST_GEMINI_DIAGNOSTICS["last_model"] = model_name
-                    _LAST_GEMINI_DIAGNOSTICS["last_error"] = None
-                    return text, model_name
-            except Exception as exc2:
-                safe_err2 = _sanitize_gemini_error(exc2, api_key)
-                _LAST_GEMINI_DIAGNOSTICS["last_error"] = f"{model_name} -> {safe_err2}"
-                logger.warning("Gemini model %s retry failed: %s", model_name, safe_err2)
-                err_txt2 = str(exc2).upper()
-                if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
-                    mark_model_unavailable(model_name)
-                continue
+            continue
 
     return "", ""
 
@@ -516,9 +517,18 @@ def generate_companion_response(
     repetition_info: Dict[str, Any],
     demo_scenario_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Invoke Gemini fallback chain with structured JSON output and thinking_budget=0."""
+    """Invoke Gemini fallback chain (max 2 models, 6s timeout each, 0 RPD on obvious crisis)."""
     low = user_text.lower()
     is_obvious_crisis = demo_scenario_id == "demo_3_crisis" or any(k in low for k in CRISIS_KEYWORDS)
+
+    # Zero-RPD, <0.3s instant Naomi Feil contention on obvious crisis
+    if is_obvious_crisis:
+        return _deterministic_fallback_reply(
+            user_text=user_text,
+            profile=profile,
+            repetition_info=repetition_info,
+            demo_scenario_id=demo_scenario_id or "demo_3_crisis",
+        )
 
     if get_gemini_api_key():
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -144,7 +145,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -239,29 +240,50 @@ def create_app(
             pid = (
                 "".join(c.lower() for c in preferred if c.isalnum())[:18] or "paciente"
             )
-            seed = storage.load_demo_seed_profile()
-            seed["paciente"]["id"] = pid
-            seed["paciente"]["tipo_perfil"] = "familiar_personalizado"
-            seed["paciente"]["nombre_completo"] = clean_name
-            seed["paciente"]["nombre_preferido"] = preferred
-            seed["paciente"]["edad"] = int(req.edad or 72)
-            if req.ciudad_residencia:
-                seed["paciente"]["ciudad_residencia"] = req.ciudad_residencia.strip()
-            if req.ocupacion_historica:
-                seed["paciente"]["ocupacion_historica"] = req.ocupacion_historica.strip()
-            if req.esposa_o_pareja:
-                seed["red_familiar_y_afectiva"]["esposa_finada"] = req.esposa_o_pareja.strip()
-            if req.caregiver_name:
-                seed["red_familiar_y_afectiva"]["hija_mayor_cuidadora"]["nombre"] = req.caregiver_name.strip()
-                seed["contacto_emergencia_telegram"]["nombre"] = req.caregiver_name.strip()
-            if req.hijos_detalle:
-                seed["red_familiar_y_afectiva"]["hija_menor"]["detalle"] = req.hijos_detalle.strip()
-            if req.anclas_de_reminiscencia:
-                cleaned_anchors = [a.strip() for a in req.anclas_de_reminiscencia if a.strip()]
-                if cleaned_anchors:
-                    seed["anclas_de_reminiscencia"] = cleaned_anchors
-            seed["recuerdos_aprendidos"] = []
-            profile = storage.save_profile(seed, pid)
+            if pid == "donmanuel":
+                pid = "paciente_custom"
+            caregiver_clean = (req.caregiver_name or "Familiar Cuidador").strip()
+            cleaned_anchors = [
+                a.strip() for a in (req.anclas_de_reminiscencia or []) if a.strip()
+            ]
+            # Build a clean custom profile without cloning Don Manuel's personal family data
+            custom_profile: Dict[str, Any] = {
+                "paciente": {
+                    "id": pid,
+                    "tipo_perfil": "familiar_personalizado",
+                    "nombre_completo": clean_name,
+                    "nombre_preferido": preferred,
+                    "edad": int(req.edad or 72),
+                    "ciudad_residencia": (req.ciudad_residencia or "México").strip(),
+                    "ocupacion_historica": (req.ocupacion_historica or "No especificada").strip(),
+                },
+                "red_familiar_y_afectiva": {
+                    "esposa_finada": (req.esposa_o_pareja or "").strip(),
+                    "hija_mayor_cuidadora": {
+                        "nombre": caregiver_clean,
+                        "ciudad": (req.ciudad_residencia or "").strip(),
+                        "detalle": "Familiar responsable principal",
+                    },
+                    "hija_menor": {
+                        "nombre": "",
+                        "ciudad": "",
+                        "ocupacion": "",
+                        "detalle": (req.hijos_detalle or "").strip(),
+                    },
+                    "nietos": [],
+                },
+                "anclas_de_reminiscencia": cleaned_anchors,
+                "recuerdos_aprendidos": [],
+                "rutinas_salud_suaves": [
+                    "Tomar un vaso de agua durante el día",
+                ],
+                "contacto_emergencia_telegram": {
+                    "nombre": caregiver_clean,
+                    "parentesco": "Familiar",
+                    "chat_id": cfg.get("telegram_chat_id", ""),
+                },
+            }
+            profile = storage.save_profile(custom_profile, pid)
             db.seed_longitudinal_days(pid, force=False)
 
             cfg["active_profile_id"] = pid
@@ -480,32 +502,40 @@ def create_app(
             circadian_period=circadian,
         )
 
-        # 5. Telegram Family Bridge (Abstract Summary Filter enforced)
+        # 5 & 6. Run Telegram delivery + Edge-TTS in parallel inside the request
+        # Guarantees 0ms extra latency while preventing Cloud Run CPU throttling from freezing S.O.S. alerts
         chat_id = cfg.get("telegram_chat_id", "")
-        if llm_res.get("emergency_triggered"):
-            tg_event = telegram.send_level3_sos_crisis(
-                profile_id=pid,
-                elder_name=elder_name,
-                reason=llm_res.get("emergency_reason") or "Desorientación o malestar agudo detectado.",
-                dinner_tip=llm_res.get("dinner_conversation_tip", "Llamar de inmediato al adulto mayor."),
-                chat_id=chat_id,
-            )
-        else:
-            tg_event = telegram.send_level1_daily_pulse(
+
+        def _dispatch_telegram() -> Dict[str, Any]:
+            if llm_res.get("emergency_triggered"):
+                return telegram.send_level3_sos_crisis(
+                    profile_id=pid,
+                    elder_name=elder_name,
+                    reason=llm_res.get("emergency_reason") or "Desorientación o malestar agudo detectado.",
+                    dinner_tip=llm_res.get("dinner_conversation_tip", "Llamar de inmediato al adulto mayor."),
+                    chat_id=chat_id,
+                    sync=True,
+                )
+            return telegram.send_level1_daily_pulse(
                 profile_id=pid,
                 elder_name=elder_name,
                 emotional_state=llm_res.get("emotional_state", "tranquilo"),
                 topic_summary=llm_res.get("conversation_topic_summary", "Conversación cálida de reminiscencia."),
                 dinner_tip=llm_res.get("dinner_conversation_tip", "Pregúntale en la cena cómo estuvo su tarde."),
                 chat_id=chat_id,
+                sync=True,
             )
 
-        # 6. Geriatric Speech Synthesis (Edge-TTS -15%, -5Hz)
-        audio_uri = synthesize_elder_voice(
-            llm_res["assistant_reply"],
-            voice_gender=cfg.get("voice_gender", "male"),
-            enabled=not req.skip_tts,
-        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tg_future = pool.submit(_dispatch_telegram)
+            tts_future = pool.submit(
+                synthesize_elder_voice,
+                llm_res["assistant_reply"],
+                cfg.get("voice_gender", "male"),
+                not req.skip_tts,
+            )
+            tg_event = tg_future.result()
+            audio_uri = tts_future.result()
 
         # 7. Bidirectional Visual Anchor (Voice -> Photo)
         theme = llm_res.get("memory_album_theme", "familia_hogar")
@@ -624,9 +654,9 @@ def create_app(
 
     @app.get("/api/photos/file/{filename}")
     def serve_photo_file(filename: str) -> FileResponse:
-        safe_name = Path(filename).name
-        file_path = storage.photos_dir / safe_name
-        if not file_path.exists():
+        pid = _active_profile_id()
+        file_path = storage.resolve_photo_file(filename, pid)
+        if not file_path or not file_path.exists():
             raise HTTPException(status_code=404, detail="Imagen no encontrada.")
         return FileResponse(file_path, media_type="image/jpeg")
 
@@ -740,6 +770,7 @@ def create_app(
             elder_name=profile["paciente"]["nombre_preferido"],
             evaluation=ev,
             chat_id=cfg.get("telegram_chat_id", ""),
+            sync=True,
         )
         return {"ok": True, "telegram_event": log_entry, "state": _build_full_state()}
 

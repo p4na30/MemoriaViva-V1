@@ -21,6 +21,7 @@ from backend.config import (
     TTS_VOICE_MALE,
     get_gemini_api_key,
     get_gemini_model_chain,
+    mark_model_unavailable,
 )
 
 # ---------------------------------------------------------------------------
@@ -295,30 +296,40 @@ def merge_rms_pauses_into_timestamps(
                 break
         return ts_list
 
-    # Build synthetic timestamps from transcript + real RMS pause timings
+    # Build synthetic timestamps from transcript distributing ALL real RMS pauses proportionally
     words = [w for w in transcript.split() if w.strip()]
     if not words:
         return []
 
     total_dur = float(rms_analysis.get("duration_sec") or max(1.5, len(words) * 0.42))
-    anomic_pauses = [p for p in rms_pauses if p.get("is_anomic")]
-    if anomic_pauses and len(words) >= 2:
-        p = anomic_pauses[0]
-        pivot = max(1, min(len(words) - 1, int((p["start_sec"] / max(0.5, total_dur)) * len(words))))
-        result: List[Dict[str, Any]] = []
-        cursor = 0.0
-        for idx, w in enumerate(words):
-            if idx == pivot:
-                cursor += float(p["duration_sec"])
-            result.append({"word": w, "start": round(cursor, 3), "end": round(cursor + 0.32, 3)})
-            cursor += 0.42
-        return result
+    gap_map: Dict[int, float] = {}
+    if rms_pauses and len(words) >= 2:
+        for p in sorted(rms_pauses, key=lambda item: float(item.get("start_sec", 0.0))):
+            dur = float(p.get("duration_sec", 0.0))
+            if dur < 0.45:
+                continue
+            pivot = max(
+                1,
+                min(len(words) - 1, int(round((float(p.get("start_sec", 0.0)) / max(0.5, total_dur)) * len(words)))),
+            )
+            # Avoid overwriting an already-assigned gap if two pauses map to the same word boundary
+            while pivot in gap_map and pivot < len(words) - 1:
+                pivot += 1
+            if pivot in gap_map:
+                gap_map[pivot] = max(gap_map[pivot], dur)
+            else:
+                gap_map[pivot] = dur
 
-    result = []
+    result: List[Dict[str, Any]] = []
     cursor = 0.0
-    for w in words:
-        result.append({"word": w, "start": round(cursor, 3), "end": round(cursor + 0.34, 3)})
-        cursor += 0.45
+    for idx, w in enumerate(words):
+        if idx in gap_map:
+            cursor += gap_map[idx]
+        elif idx > 0:
+            cursor += 0.12
+        word_dur = 0.34
+        result.append({"word": w, "start": round(cursor, 3), "end": round(cursor + word_dur, 3)})
+        cursor += word_dur
     return result
 
 
@@ -358,7 +369,11 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
                 text = (response.text or "").strip()
                 if text:
                     return text
-            except Exception:
+            except Exception as exc:
+                err_txt = str(exc).upper()
+                if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
+                    mark_model_unavailable(model_name)
+                    continue
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -368,7 +383,10 @@ def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
                     text = (response.text or "").strip()
                     if text:
                         return text
-                except Exception:
+                except Exception as exc2:
+                    err_txt2 = str(exc2).upper()
+                    if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
+                        mark_model_unavailable(model_name)
                     continue
         return ""
     except Exception:

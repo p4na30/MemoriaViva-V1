@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -67,22 +69,51 @@ TTS_VOICE_FEMALE: str = "es-MX-DaliaNeural"
 TTS_RATE: str = "-15%"
 TTS_PITCH: str = "-5Hz"
 
-# LLM Configuration (fast fallback chain with thinking disabled for < 1.5s latency)
-GEMINI_MODEL_COMPANION: str = os.getenv("GEMINI_MODEL_COMPANION", "gemini-3.8-flash")
+# Timezone for clinical circadian classification (Sundowning) and PDF reports
+MV_TIMEZONE: str = os.getenv("MV_TIMEZONE", "America/Mexico_City")
+
+
+def get_local_timezone() -> ZoneInfo | timezone:
+    """Return configured clinical local timezone (defaults to America/Mexico_City)."""
+    tz_name = os.getenv("MV_TIMEZONE", MV_TIMEZONE).strip() or "America/Mexico_City"
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return timezone.utc
+
+
+def get_local_now() -> datetime:
+    """Return timezone-aware current datetime in configured clinical local timezone."""
+    return datetime.now(get_local_timezone())
+
+
+# LLM Configuration (verified fast fallback chain with thinking disabled + 404 circuit breaker)
+GEMINI_MODEL_COMPANION: str = os.getenv("GEMINI_MODEL_COMPANION", "gemini-flash-latest")
 GEMINI_MODEL_FALLBACK_CHAIN: List[str] = [
-    "gemini-3.8-flash",
     "gemini-flash-latest",
     "gemini-2.5-flash",
 ]
 MAX_ASSISTANT_WORDS: int = 35
 
+_UNAVAILABLE_MODELS: Set[str] = set()
+
+
+def mark_model_unavailable(model_name: str) -> None:
+    """Circuit-breaker: skip models returning 404/NOT_FOUND on subsequent turns (0ms wasted)."""
+    _UNAVAILABLE_MODELS.add(model_name)
+
+
+def clear_unavailable_models() -> None:
+    """Reset in-memory unavailable model cache (used in tests)."""
+    _UNAVAILABLE_MODELS.clear()
+
 
 def get_gemini_model_chain() -> List[str]:
-    """Return ordered deduplicated Gemini fallback chain starting with configured primary model."""
+    """Return ordered deduplicated Gemini fallback chain excluding known-404 models."""
     primary = os.getenv("GEMINI_MODEL_COMPANION", GEMINI_MODEL_COMPANION).strip()
     chain: List[str] = []
     for model in [primary, *GEMINI_MODEL_FALLBACK_CHAIN]:
-        if model and model not in chain:
+        if model and model not in chain and model not in _UNAVAILABLE_MODELS:
             chain.append(model)
     return chain
 
@@ -122,9 +153,9 @@ CONFOUNDING_FACTORS: List[Dict[str, str]] = [
 # Notre Dame Global RISE AI Hackathon — Official "Identify Your Tools" Catalog
 AI_TOOLS_DISCLOSURE: List[Dict[str, str]] = [
     {
-        "tool": "Google Gemini (gemini-3.8-flash -> gemini-flash-latest -> gemini-2.5-flash)",
+        "tool": "Google Gemini (gemini-flash-latest -> gemini-2.5-flash -> respaldo local)",
         "category": "Generación Conversacional & STT Multimodal Fallback",
-        "role": "Cadena automática de respaldo con thinking desactivado (thinking_budget=0) para latencia <1.5s y mínimo gasto de tokens: conduce Terapia de Reminiscencia (<=35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
+        "role": "Cadena automática de respaldo con circuit-breaker anti-404 y thinking desactivado (thinking_budget=0) para latencia <1.5s y mínimo gasto de tokens: conduce Terapia de Reminiscencia (<=35 palabras), aplica Validación de Naomi Feil en crisis, extrae hechos biográficos (RAG-Lite) y transcribe audio en RAM.",
         "privacy_and_limits": "Sin diagnóstico médico ni consejos farmacológicos. Audio enviado solo en RAM si hace falta STT, 0 bytes almacenados; respaldo local determinista si no hay red.",
     },
     {

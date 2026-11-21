@@ -30,6 +30,8 @@ from backend.config import (
     SEMANTIC_REPEAT_THRESHOLD,
     Z_SCORE_MATTR_ALERT,
     Z_SCORE_PAUSE_ALERT,
+    get_local_now,
+    get_local_timezone,
 )
 
 STOPWORDS_ES = {
@@ -355,8 +357,13 @@ def evaluate_longitudinal_trend(days: Sequence[Dict[str, Any]]) -> Dict[str, Any
 
 
 def classify_circadian_period(dt: Optional[datetime] = None) -> str:
-    """Tag circadian window to control for late-afternoon Sundowning effects."""
-    now = dt or datetime.now()
+    """Tag circadian window in clinical local timezone to control for Sundowning effects."""
+    if dt is None:
+        now = get_local_now()
+    elif dt.tzinfo is not None:
+        now = dt.astimezone(get_local_timezone())
+    else:
+        now = dt
     hour = now.hour
     if 6 <= hour <= 13:
         return "matutino"

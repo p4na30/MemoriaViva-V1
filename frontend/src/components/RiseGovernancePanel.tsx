@@ -21,9 +21,23 @@ interface Props {
 
 const DECISION_LABELS: Record<string, string> = {
   validado: "Tendencia validada",
-  contexto_externo: "Explicado por contexto externo",
+  contexto_externo: "Anulada / Contexto externo",
   seguimiento_sugerido: "Sugerir consulta geriátrica",
 };
+
+function formatLocalDateTime(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace("T", " ");
+  return d.toLocaleString("es-MX", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
 
 export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) => {
   const { notify } = useToast();
@@ -182,12 +196,14 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
           </button>
         </form>
 
-        {/* Auditable History of Human Reviews */}
+        {/* Auditable History of Human Reviews (Notre Dame Override Log) */}
         <div className="clinical-card p-5 lg:col-span-6 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileCheck2 className="w-5 h-5" style={{ color: "var(--emerald)" }} />
-              <h3 className="text-base font-semibold">Bitácora Auditable (SQLite)</h3>
+              <h3 className="text-base font-semibold">
+                Bitácora de Auditoría y Anulación Humana (Override Log)
+              </h3>
             </div>
             <span className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>
               {state.clinical_reviews.length} registro(s)
@@ -241,7 +257,7 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
                       Instantánea: MATTR {rev.mattr_snapshot.toFixed(3)} · Pausas{" "}
                       {rev.pause_snapshot.toFixed(2)}s
                     </span>
-                    <span>{rev.created_at.slice(0, 16).replace("T", " ")}</span>
+                    <span>{formatLocalDateTime(rev.created_at)}</span>
                   </div>
                 </article>
               ))}
@@ -288,6 +304,33 @@ export const RiseGovernancePanel: React.FC<Props> = ({ state, onStateChange }) =
               </p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Model Card & Clinical Boundaries (Notre Dame Governance Gap Alignment) */}
+      <section className="clinical-card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Scale className="w-5 h-5" style={{ color: "var(--primary)" }} />
+          <div>
+            <h3 className="text-base font-semibold">Model Card & Límites Clínicos (Framework R.I.S.E.)</h3>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Documentación de propósito, respaldo científico y mecanismo de corrección (Redress & Override Log).
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs leading-relaxed">
+          <div className="p-3.5 rounded-xl border space-y-1" style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}>
+            <strong className="block">Uso Previsto y Límites No Diagnósticos</strong>
+            <p style={{ color: "var(--text-muted)" }}>
+              Diseñado para estimulación cognitiva mediante <strong>Terapia de Reminiscencia</strong> (Butler, 1963; Woods et al., 2018) y contención no confrontativa de <strong>Validación de Naomi Feil</strong> (Feil, 1993). Prohibido emitir diagnósticos médicos o ajustar fármacos.
+            </p>
+          </div>
+          <div className="p-3.5 rounded-xl border space-y-1" style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}>
+            <strong className="block">Evidencia de Biomarcadores y Mecanismo de Corrección</strong>
+            <p style={{ color: "var(--text-muted)" }}>
+              MATTR (Covington &amp; McFall, 2010), habla espontánea en DCL (Fraser et al., 2016), pausas anómicas &gt;=2.0s (Pistono et al., 2016) y repetición semántica (Guinn &amp; Habash, 2012). Cualquier alerta puede ser anulada o contextualizada en el <em>Override Log</em> superior antes de generar el PDF.
+            </p>
+          </div>
         </div>
       </section>
 

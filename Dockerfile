@@ -17,12 +17,15 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080 \
-    MV_DATA_DIR=/app/data
+    MV_DATA_DIR=/app/data \
+    TZ=America/Mexico_City \
+    MV_TIMEZONE=America/Mexico_City
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
     fonts-dejavu-core \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

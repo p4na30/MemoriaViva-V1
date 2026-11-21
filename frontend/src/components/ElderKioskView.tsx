@@ -353,6 +353,9 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           let hasSpoken = false;
           let lastVoiceAt = Date.now();
           const startedAt = Date.now();
+          // Calibrate ambient noise floor over the first 400ms for adaptive Auto-VAD
+          const calibrationSamples: number[] = [];
+          let adaptiveThreshold = 0.03;
 
           vadTimerRef.current = window.setInterval(() => {
             if (!listeningRef.current) return;
@@ -363,16 +366,25 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
               sum += v * v;
             }
             const rms = Math.sqrt(sum / data.length);
-            if (rms > 0.03) {
+            const totalElapsed = Date.now() - startedAt;
+
+            if (totalElapsed <= 420) {
+              calibrationSamples.push(rms);
+              const avgNoise =
+                calibrationSamples.reduce((acc, val) => acc + val, 0) / calibrationSamples.length;
+              adaptiveThreshold = Math.max(0.025, Math.min(0.14, avgNoise * 2.2));
+              return;
+            }
+
+            if (rms > adaptiveThreshold) {
               hasSpoken = true;
               lastVoiceAt = Date.now();
             }
             const silenceElapsed = Date.now() - lastVoiceAt;
-            const totalElapsed = Date.now() - startedAt;
             if ((hasSpoken && silenceElapsed >= vadSilenceMs) || totalElapsed >= 25000) {
               stopListeningAndSubmit();
             }
-          }, 180);
+          }, 120);
         } catch {
           // If AudioContext unavailable, user can tap Stop manually
         }

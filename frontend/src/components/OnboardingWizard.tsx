@@ -536,7 +536,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                 <div className="p-4 rounded-xl border space-y-1.5" style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-subtle)" }}>
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     <Cpu className="w-4 h-4" style={{ color: "var(--primary)" }} />
-                    Gemini 2.5 Flash + Respaldo Local
+                    Gemini Flash (Cadena Rápida) + Respaldo Local
                   </div>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                     {state.runtime_status.gemini_configured

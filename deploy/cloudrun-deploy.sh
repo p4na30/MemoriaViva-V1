@@ -10,18 +10,20 @@ PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || t
 REGION="${GCP_REGION:-us-central1}"
 SERVICE_NAME="${CLOUD_RUN_SERVICE:-memoriaviva-rise}"
 BUCKET_NAME="${GCS_DATA_BUCKET:-memoriaviva-data-${PROJECT_ID}}"
+MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-1}"
+TIMEZONE="${MV_TIMEZONE:-America/Mexico_City}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "Error: define GCP_PROJECT_ID o ejecuta 'gcloud config set project TU_PROYECTO'."
   exit 1
 fi
 
-echo "==> Proyecto: ${PROJECT_ID} | Región: ${REGION} | Servicio: ${SERVICE_NAME}"
+echo "==> Proyecto: ${PROJECT_ID} | Región: ${REGION} | Servicio: ${SERVICE_NAME} | min-instances=${MIN_INSTANCES}"
 echo "==> Verificando bucket de persistencia gs://${BUCKET_NAME} ..."
 gcloud storage buckets describe "gs://${BUCKET_NAME}" >/dev/null 2>&1 || \
   gcloud storage buckets create "gs://${BUCKET_NAME}" --location="${REGION}"
 
-ENV_VARS="MV_DATA_DIR=/app/data,MV_CLOUD_SYNC=1"
+ENV_VARS="MV_DATA_DIR=/app/data,MV_CLOUD_SYNC=1,MV_TIMEZONE=${TIMEZONE},TZ=${TIMEZONE}"
 if [[ -n "${GEMINI_API_KEY:-}" ]]; then
   ENV_VARS="${ENV_VARS},GEMINI_API_KEY=${GEMINI_API_KEY}"
 fi
@@ -41,9 +43,11 @@ gcloud run deploy "${SERVICE_NAME}" \
   --project "${PROJECT_ID}" \
   --region "${REGION}" \
   --allow-unauthenticated \
+  --no-cpu-throttling \
   --memory 2Gi \
   --cpu 1 \
   --timeout 3600 \
+  --min-instances "${MIN_INSTANCES}" \
   --max-instances 1 \
   --session-affinity \
   --add-volume "name=mv-data,type=cloud-storage,bucket=${BUCKET_NAME}" \

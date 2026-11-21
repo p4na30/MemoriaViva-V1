@@ -6,6 +6,7 @@ and 3-Level Triage Alerts enforcing the Abstract Summary Filter.
 from __future__ import annotations
 
 import base64
+import html
 import io
 import threading
 from typing import Any, Dict, Optional
@@ -265,12 +266,14 @@ class TelegramNotifier:
             f"Resumen (Filtro de Privacidad): {topic_summary}\n"
             f"Sugerencia para la cena: {dinner_tip}"
         )
+        safe_name = html.escape(elder_name)
+        safe_body = html.escape(body)
         return self._queue_and_dispatch(
             profile_id=profile_id,
             level=1,
             title=title,
             body=body,
-            html_text=f"<b>[Nivel 1 - Pulso Diario] {elder_name}</b>\n{body}",
+            html_text=f"<b>[Nivel 1 - Pulso Diario] {safe_name}</b>\n{safe_body}",
             chat_id=chat_id,
             sync=sync,
         )
@@ -296,12 +299,14 @@ class TelegramNotifier:
             "Aviso de apoyo clínico no diagnóstico: revisa variables de confusión (sueño, medicación, Sundowning) "
             "en Gobernanza RISE y comparte el PDF con su geriatra si persiste."
         )
+        safe_name = html.escape(elder_name)
+        safe_body = html.escape(body)
         return self._queue_and_dispatch(
             profile_id=profile_id,
             level=2,
             title=title,
             body=body,
-            html_text=f"<b>[Nivel 2 - Aviso Preventivo] {elder_name}</b>\n{body}",
+            html_text=f"<b>[Nivel 2 - Aviso Preventivo] {safe_name}</b>\n{safe_body}",
             chat_id=chat_id,
             sync=sync,
         )
@@ -322,12 +327,14 @@ class TelegramNotifier:
             "Acción tomada: MemoriaViva suspendió preguntas cognitivas y aplicó Contención por Validación de Naomi Feil.\n"
             f"Acción recomendada: {dinner_tip}"
         )
+        safe_name = html.escape(elder_name)
+        safe_body = html.escape(body)
         return self._queue_and_dispatch(
             profile_id=profile_id,
             level=3,
             title=title,
             body=body,
-            html_text=f"<b>[ALERTA ROJA S.O.S. - NIVEL 3] {elder_name}</b>\n{body}",
+            html_text=f"<b>[ALERTA ROJA S.O.S. - NIVEL 3] {safe_name}</b>\n{safe_body}",
             chat_id=chat_id,
             sync=sync,
         )

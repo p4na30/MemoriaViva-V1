@@ -32,7 +32,7 @@ En América Latina, la mayoría de los casos de Deterioro Cognitivo Leve (DCL/MC
 
 Cumpliendo los principios oficiales **Use of AI** de Notre Dame (también visible dentro de la pestaña **Gobernanza RISE & IA** y en cada PDF generado):
 
-- **Google Gemini (`gemini-2.5-flash`):** generación conversacional empática ($\le 35$ palabras), extracción biográfica estructurada (JSON) y transcripción multimodal en RAM como respaldo cuando el dispositivo (ej. Android WebView) no soporta Web Speech API. Cuenta con respaldo determinista local 100% funcional sin API key.
+- **Google Gemini (`gemini-flash-latest` → `gemini-2.5-flash` → respaldo local, `thinking_budget=0`):** cadena automática con *circuit-breaker* anti-404 para latencia `< 1.5s`, generación conversacional empática ($\le 35$ palabras), extracción biográfica estructurada (JSON) y transcripción multimodal en RAM como respaldo cuando el dispositivo (ej. Android WebView) no soporta Web Speech API. Cuenta con respaldo determinista local 100% funcional sin API key.
 - **Microsoft Edge-TTS Neural (`es-MX-JorgeNeural` / `DaliaNeural`):** síntesis de voz en memoria compensada para presbiacusia (`-15%` velocidad, `-5Hz` tono).
 - **Motor Matemático Local (`Python / NumPy / SciPy / Scikit-Learn`):** normalización de audio en RAM mediante tuberías `ffmpeg` (`pipe:0 -> pipe:1`), detección acústica de pausas anómicas ($\ge 2.0\text{ s}$), riqueza léxica `MATTR` (ventana móvil `W=20`), bucle semántico `TF-IDF Cosine` ($\ge 0.72$) y Z-Score longitudinal de 21 días (Días 1–14 línea base vs últimos 5 días).
 - **Generación de Postales Semilla:** las 10 postales nostálgicas del caso simulado *Don Manuel* (`data/sample_assets/`) son imágenes sintéticas generadas con IA (sin personas reales identificables), respaldadas por un generador programático `Pillow`.
@@ -105,3 +105,5 @@ Configura la variable de repositorio `APP_SERVER_URL` con tu URL HTTPS de Cloud 
    - **Escena 2 (Anomia y Crisis S.O.S.):** Pulsar `2` (*Pausa anómica 3.18s*) y `3` (*Desorientación aguda* → Validación de Naomi Feil sin preguntas cognitivas + Alerta Roja Nivel 3 en Telegram).
    - **Escena 3 (Panel Clínico, *Human-in-the-Loop* y PDF):** Desbloquear con candado (`1234`), explorar la gráfica de 21 días (`Combinada` / `MATTR` / `Pausas` + banda D1–D14), registrar una revisión *Human-in-the-Loop* con variables de confusión en **Gobernanza RISE & IA** y descargar el **Reporte Clínico PDF** con la nota incluida.
 4. **4:15 – 5:00 | Impacto RISE y Q&A.**
+
+> **Nota de Arquitectura y Seguridad (Q&A):** En este prototipo de 24 horas el PIN (SHA-256 con salt) protege la transición entre el Modo Kiosco del adulto mayor y el Panel Familiar en el dispositivo; la hoja de ruta clínica v4 incorpora autenticación OAuth2/JWT por rol (Cuidador vs. Geriatra) y cifrado en reposo compatible con LFPDPPP/HIPAA.

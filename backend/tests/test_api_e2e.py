@@ -141,3 +141,51 @@ def test_full_pitch_flow_end_to_end(tmp_path: Path, monkeypatch) -> None:
     assert reset_state["recent_turns"] == []
     assert reset_state["clinical_reviews"] == []
     assert reset_state["profile"]["recuerdos_aprendidos"] == []
+
+
+def test_manual_onboarding_profile_isolation_and_jpg_upload(tmp_path: Path, monkeypatch) -> None:
+    """Ensure manual onboarding never leaks Don Manuel's family data and isolates photo uploads as .jpg."""
+    import io
+    from PIL import Image
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    client = _build_test_client(tmp_path)
+
+    r = client.post(
+        "/api/onboarding/complete",
+        json={
+            "use_demo_persona": False,
+            "nombre_completo": "Elena Morales Ruiz",
+            "nombre_preferido": "Doña Elena",
+            "caregiver_name": "Carlos Morales",
+            "caregiver_username": "carlos.m",
+            "pin": "5678",
+            "edad": 78,
+            "ciudad_residencia": "Colima, Colima",
+            "ocupacion_historica": "Costurera",
+            "consent_accepted": True,
+        },
+    )
+    assert r.status_code == 200
+    profile = r.json()["state"]["profile"]
+    serialized = str(profile)
+    assert "Doña Elena" in serialized
+    assert "Carmen" not in serialized
+    assert "Rocío" not in serialized
+    assert "Vocho" not in serialized
+    assert "Mateo" not in serialized
+
+    # Upload a PNG image -> must be normalized and stored with .jpg extension
+    buf = io.BytesIO()
+    Image.new("RGB", (120, 80), color=(20, 110, 140)).save(buf, format="PNG")
+    buf.seek(0)
+    r_up = client.post(
+        "/api/photos",
+        files={"file": ("mi_foto_familiar.png", buf.getvalue(), "image/png")},
+        data={"title": "Jardín de Colima", "caption": "Tarde en familia", "theme": "familia_hogar"},
+    )
+    assert r_up.status_code == 200
+    assert r_up.json()["photo"]["filename"].endswith(".jpg")
+    r_serve = client.get(r_up.json()["photo"]["url"])
+    assert r_serve.status_code == 200

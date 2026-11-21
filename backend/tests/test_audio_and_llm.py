@@ -179,12 +179,13 @@ def test_telegram_qr_three_levels_and_pdf_with_hitl(tmp_path: Path, monkeypatch)
 
 
 def test_gemini_fallback_chain_and_thinking_budget_zero(monkeypatch) -> None:
-    """Verify automatic fallback chain gemini-3.8-flash -> gemini-flash-latest -> local + thinking_budget=0."""
-    import sys
+    """Verify automatic fallback chain + 404 circuit-breaker + thinking_budget=0 + clean Feil guardrail."""
     import types as pytypes
+    from backend.config import clear_unavailable_models
 
+    clear_unavailable_models()
     monkeypatch.setenv("GEMINI_API_KEY", "test-fake-key")
-    monkeypatch.delenv("GEMINI_MODEL_COMPANION", raising=False)
+    monkeypatch.setenv("GEMINI_MODEL_COMPANION", "gemini-missing-404")
 
     calls = []
 
@@ -192,8 +193,8 @@ def test_gemini_fallback_chain_and_thinking_budget_zero(monkeypatch) -> None:
         def generate_content(self, model, contents, config=None):
             budget = getattr(getattr(config, "thinking_config", None), "thinking_budget", None)
             calls.append((model, budget))
-            if model == "gemini-3.8-flash":
-                raise RuntimeError("404 model not available yet")
+            if model == "gemini-missing-404":
+                raise RuntimeError("404 NOT_FOUND model does not exist")
             payload = json.dumps(
                 {
                     "assistant_reply": "Qué bonito recuerdo de sus trenes, Don Manuel. ¿Qué ruta disfrutaba más?",
@@ -214,35 +215,88 @@ def test_gemini_fallback_chain_and_thinking_budget_zero(monkeypatch) -> None:
         def __init__(self, api_key=None):
             self.models = FakeModels()
 
-    fake_genai = pytypes.SimpleNamespace(Client=FakeClient)
     from google import genai as real_genai
 
     monkeypatch.setattr(real_genai, "Client", FakeClient)
 
     storage = StorageManager()
     profile = storage.load_demo_seed_profile()
-    res = generate_companion_response("Me encantaban los trenes de Guadalajara.", profile, [], {"is_repetition": False})
 
-    assert res["engine_used"] == "gemini-flash-latest"
-    assert calls[0][0] == "gemini-3.8-flash"
-    assert calls[0][1] == 0
-    assert any(m == "gemini-flash-latest" and b == 0 for m, b in calls)
-    assert "sys" or sys  # keep import clean
+    # Turn 1: hits 404 on gemini-missing-404, marks it unavailable, succeeds on gemini-flash-latest
+    res1 = generate_companion_response("Me encantaban los trenes de Guadalajara.", profile, [], {"is_repetition": False})
+    assert res1["engine_used"] == "gemini-flash-latest"
+    assert calls[0] == ("gemini-missing-404", 0)
+    assert calls[1] == ("gemini-flash-latest", 0)
+
+    # Turn 2: circuit breaker skips gemini-missing-404 completely (0ms wasted)
+    calls.clear()
+    res2 = generate_companion_response("Recordé el reloj de jubilación.", profile, [], {"is_repetition": False})
+    assert res2["engine_used"] == "gemini-flash-latest"
+    assert [m for m, _ in calls] == ["gemini-flash-latest"]
+
+    # Crisis guardrail: if Gemini slips a question in crisis, substitute clean Naomi Feil text
+    class CrisisSlipModels:
+        def generate_content(self, model, contents, config=None):
+            return pytypes.SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "assistant_reply": "Tranquilo Don Manuel. ¿Cómo se siente ahora?",
+                        "emotional_state": "crisis_desorientacion",
+                        "emergency_triggered": True,
+                        "emergency_reason": "Desorientación",
+                        "biographical_rescue_triggered": False,
+                        "rescued_entity": None,
+                        "conversation_topic_summary": "Crisis",
+                        "dinner_conversation_tip": "Llamar",
+                        "new_biographical_facts": [],
+                        "memory_album_theme": "familia_hogar",
+                    }
+                )
+            )
+
+    class CrisisClient:
+        def __init__(self, api_key=None):
+            self.models = CrisisSlipModels()
+
+    monkeypatch.setattr(real_genai, "Client", CrisisClient)
+    res_crisis = generate_companion_response(
+        "No sé qué hago aquí, estoy asustado", profile, [], {"is_repetition": False}
+    )
+    assert res_crisis["emergency_triggered"] is True
+    assert "?" not in res_crisis["assistant_reply"]
+    assert "¿" not in res_crisis["assistant_reply"]
+    assert "Cómo se siente ahora" not in res_crisis["assistant_reply"]
+    clear_unavailable_models()
 
 
-def test_telegram_async_nonblocking_and_signed_formatting(tmp_path: Path, monkeypatch) -> None:
-    """Verify Telegram alerts queue asynchronously and never produce '+-' in Level 2 text."""
+def test_telegram_html_escaping_async_and_signed_formatting(tmp_path: Path, monkeypatch) -> None:
+    """Verify Telegram escapes HTML entities (&, <, >), avoids '+-', and supports sync+async."""
     import time
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
     db = DatabaseManager(db_path=tmp_path / "test_async.db", cloud_sync=False)
     tg = TelegramNotifier(db=db)
+    sent_payloads = []
 
     def fake_send(chat_id: str, text: str):
-        time.sleep(0.05)
+        sent_payloads.append(text)
+        time.sleep(0.03)
         return True, "delivered_telegram"
 
     monkeypatch.setattr(tg, "_send_raw_message", fake_send)
+
+    # HTML escaping check on &, <, >
+    tg.send_level1_daily_pulse(
+        profile_id="don_manuel",
+        elder_name="Don Manuel & Familia",
+        emotional_state="alegre",
+        topic_summary="Habló de trenes <antiguos> & boleros",
+        dinner_tip="Preguntar por música > 1970",
+        chat_id="99999",
+        sync=True,
+    )
+    assert "&amp;" in sent_payloads[0]
+    assert "&lt;antiguos&gt;" in sent_payloads[0]
 
     # Negative pause delta should format as -5.2%, NEVER +-5.2%
     neg_eval = {
@@ -262,9 +316,40 @@ def test_telegram_async_nonblocking_and_signed_formatting(tmp_path: Path, monkey
     assert "Pausas -5.2%" in entry["message"]
     assert "MATTR +4.5%" in entry["message"]
 
-    # Wait briefly for background thread to update SQLite row
-    time.sleep(0.2)
+    time.sleep(0.15)
     logs = db.get_telegram_logs("don_manuel", limit=5)
     assert logs[0]["delivered"] is True
     assert logs[0]["channel_status"] == "delivered_telegram"
+
+
+def test_multiple_rms_pauses_injection_and_timezone_sundowning() -> None:
+    """Verify all RMS pauses (multiple anomic + intermediate) are preserved and Mexico TZ works."""
+    from datetime import datetime, timezone
+    from backend.biomarkers import classify_circadian_period
+
+    rms_mock = {
+        "duration_sec": 12.0,
+        "rms_pauses": [
+            {"start_sec": 2.0, "end_sec": 4.4, "duration_sec": 2.4, "is_anomic": True},
+            {"start_sec": 6.0, "end_sec": 7.1, "duration_sec": 1.1, "is_anomic": False},
+            {"start_sec": 8.5, "end_sec": 11.2, "duration_sec": 2.7, "is_anomic": True},
+        ],
+        "max_rms_pause_sec": 2.7,
+        "anomic_rms_count": 2,
+    }
+    merged = merge_rms_pauses_into_timestamps(
+        "Cuando trabajaba en los trenes de Guadalajara usábamos una llave pesada muy grande",
+        [],
+        rms_mock,
+    )
+    pauses = compute_anomic_pauses(merged, threshold_sec=2.0)
+    assert pauses["anomic_count"] == 2
+    assert pauses["max_pause_sec"] == 2.7
+
+    # 21:00 UTC == 15:00 America/Mexico_City -> must be vespertino_sundowning (NOT nocturno!)
+    utc_pitch_time = datetime(2026, 11, 21, 21, 0, tzinfo=timezone.utc)
+    assert classify_circadian_period(utc_pitch_time) == "vespertino_sundowning"
+    # 16:00 UTC == 10:00 America/Mexico_City -> must be matutino!
+    utc_morning = datetime(2026, 11, 21, 16, 0, tzinfo=timezone.utc)
+    assert classify_circadian_period(utc_morning) == "matutino"
 

@@ -134,9 +134,10 @@ function configureGradleSigning(gradlePath) {
 
   if (gradle.includes("buildTypes {")) {
     gradle = gradle.replace("buildTypes {", `${signingSnippet}\n    buildTypes {`);
+    // Target specifically buildTypes.release (never signingConfigs.release)
     gradle = gradle.replace(
-      /release\s*\{/,
-      `release {\n            if (System.getenv("KEYSTORE_FILE")) { signingConfig signingConfigs.release }`
+      /(buildTypes\s*\{\s*release\s*\{)/,
+      `$1\n            if (System.getenv("KEYSTORE_FILE")) { signingConfig signingConfigs.release }`
     );
     if (!dryRun) fs.writeFileSync(gradlePath, gradle, "utf-8");
     console.log("[configure-android] build.gradle updated with optional CI release signing.");

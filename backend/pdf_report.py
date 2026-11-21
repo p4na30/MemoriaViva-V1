@@ -11,9 +11,23 @@ from typing import Any, Dict, Sequence
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-from backend.config import AI_TOOLS_DISCLOSURE, CONFOUNDING_FACTORS
+from backend.config import AI_TOOLS_DISCLOSURE, CONFOUNDING_FACTORS, get_local_now, get_local_timezone
 
 FACTOR_LABELS = {f["id"]: f["label"] for f in CONFOUNDING_FACTORS}
+
+
+def _fmt_local_iso(iso_str: Any) -> str:
+    """Convert UTC ISO timestamp to configured clinical local timezone (YYYY-MM-DD HH:MM)."""
+    raw = str(iso_str or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(get_local_timezone())
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return raw[:16]
 
 
 def _fmt_signed(value: Any, decimals: int = 1) -> str:
@@ -28,10 +42,14 @@ def _find_unicode_fonts() -> tuple[str | None, str | None]:
     regular_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
     ]
     bold_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf",
     ]
     reg = next((p for p in regular_candidates if Path(p).exists()), None)
     bold = next((p for p in bold_candidates if Path(p).exists()), None)
@@ -153,7 +171,7 @@ def generate_clinical_pdf_bytes(
     pdf.section_heading("1. Perfil del Adulto Mayor y Resumen Ejecutivo")
     pdf.set_font(pdf.base_font, "", 9)
     pdf.set_text_color(51, 65, 85)
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    generated_at = get_local_now().strftime("%Y-%m-%d %H:%M %Z")
     pdf.body_paragraph(
         f"Paciente: {paciente.get('nombre_completo', 'N/D')} ({paciente.get('nombre_preferido', '')})  |  "
         f"Edad: {paciente.get('edad', 'N/D')} años  |  Residencia: {paciente.get('ciudad_residencia', 'N/D')}\n"
@@ -211,8 +229,8 @@ def generate_clinical_pdf_bytes(
     )
     pdf.ln(2)
 
-    # 3. Human-in-the-Loop Reviews & Confounding Variables
-    pdf.section_heading("2. Revisiones Human-in-the-Loop y Variables de Confusión")
+    # 3. Human-in-the-Loop Override Log & Confounding Variables (Notre Dame RISE Alignment)
+    pdf.section_heading("2. Bitácora de Auditoría y Anulación Humana (Human-in-the-Loop Override Log)")
     if clinical_reviews:
         for rev in list(clinical_reviews)[:8]:
             factors = [FACTOR_LABELS.get(f, f) for f in (rev.get("confounding_factors") or [])]
@@ -222,7 +240,7 @@ def generate_clinical_pdf_bytes(
             pdf.set_font(pdf.base_font, "B", 8.4)
             pdf.set_text_color(15, 23, 42)
             header_line = (
-                f"[{str(rev.get('created_at', ''))[:16]}] {rev.get('reviewer_name', 'Revisor')} "
+                f"[{_fmt_local_iso(rev.get('created_at'))}] {rev.get('reviewer_name', 'Revisor')} "
                 f"({rev.get('reviewer_role', '')}) - Decisión: {str(rev.get('decision', '')).upper()}"
             )
             pdf.body_paragraph(header_line, line_h=4.8, border="LTR", fill=True)
@@ -289,7 +307,7 @@ def generate_clinical_pdf_bytes(
     if recent_turns:
         for t in list(recent_turns)[:8]:
             line = (
-                f"- [{str(t.get('created_at', ''))[:16]} | {t.get('circadian_period', '')}] "
+                f"- [{_fmt_local_iso(t.get('created_at'))} | {t.get('circadian_period', '')}] "
                 f"MATTR={float(t.get('mattr', 0)):.3f} | Pausa Máx={float(t.get('max_pause_sec', 0)):.2f}s | "
                 f"Anómicas={t.get('anomic_count', 0)} | Emoción={t.get('emotional_state', '')} | "
                 f"Tema={t.get('memory_album_theme', '')} | Nivel={t.get('alert_level', 1)}"
@@ -299,14 +317,21 @@ def generate_clinical_pdf_bytes(
         pdf.body_paragraph("Sin turnos nuevos registrados en esta sesión.")
     pdf.ln(2)
 
-    # 6. Dual Consent & Identify Your Tools
-    pdf.section_heading("5. Consentimiento Dual Asistido y Transparencia IA (Identify Your Tools)")
+    # 6. Model Card, Clinical Boundaries, Dual Consent & Identify Your Tools
+    pdf.section_heading("5. Model Card, Consentimiento Dual y Transparencia IA (Identify Your Tools)")
     pdf.set_font(pdf.base_font, "", 7.8)
     pdf.set_text_color(71, 85, 105)
+    pdf.body_paragraph(
+        "Model Card & Límites Clínicos: Sistema de apoyo a la Terapia de Reminiscencia (Butler, 1963; Woods et al., 2018) "
+        "y Validación no confrontativa (Feil, 1993) con biomarcadores locales auto-referenciados (MATTR: Covington & McFall, 2010; "
+        "Habla espontánea MCI: Fraser et al., 2016; Pausas anómicas: Pistono et al., 2016; Repetición semántica: Guinn & Habash, 2012). "
+        "Mecanismo de corrección (Redress): toda alerta puede ser anulada o contextualizada por el cuidador/geriatra en el Override Log.",
+        line_h=4.2,
+    )
     if consent_events:
         for ev in list(consent_events)[:4]:
             pdf.body_paragraph(
-                f"- [{str(ev.get('created_at', ''))[:16]}] {ev.get('consent_type', '')} "
+                f"- [{_fmt_local_iso(ev.get('created_at'))}] {ev.get('consent_type', '')} "
                 f"({ev.get('acknowledged_by', '')}): {ev.get('summary_text', '')}",
                 line_h=4.2,
             )

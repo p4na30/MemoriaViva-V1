@@ -29,6 +29,7 @@ import {
 import {
   CartesianGrid,
   ComposedChart,
+  Legend,
   Line,
   ReferenceArea,
   ResponsiveContainer,
@@ -66,6 +67,17 @@ function formatSigned(value: number, decimals = 1): string {
     return (0).toFixed(decimals);
   }
   return `${num > 0 ? "+" : ""}${num.toFixed(decimals)}`;
+}
+
+function formatLocalTime(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(11, 16);
+  return d.toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 export const CaregiverDashboard: React.FC<Props> = ({
@@ -146,6 +158,30 @@ export const CaregiverDashboard: React.FC<Props> = ({
       notify("Aviso Preventivo Nivel 2 enviado y registrado en el Puente Familiar.", "success");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Error al enviar aviso Nivel 2.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    setBusy(true);
+    const url = api.reportPdfUrl();
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Reporte_MemoriaViva_${paciente.id || "paciente"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+      notify("Reporte Clínico PDF descargado con las notas Human-in-the-Loop actuales.", "success");
+    } catch {
+      window.open(url, "_blank", "noopener,noreferrer");
+      notify("Abriendo Reporte Clínico PDF en una nueva pestaña.", "info");
     } finally {
       setBusy(false);
     }
@@ -512,11 +548,11 @@ export const CaregiverDashboard: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <div className="h-72 w-full">
+                <div className="h-80 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart
                       data={state.history_21_days}
-                      margin={{ top: 10, right: 14, left: -12, bottom: 4 }}
+                      margin={{ top: 12, right: 20, left: 6, bottom: 4 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
                       <XAxis
@@ -527,16 +563,28 @@ export const CaregiverDashboard: React.FC<Props> = ({
                       {(chartMode === "combinada" || chartMode === "mattr") && (
                         <YAxis
                           yAxisId="left"
-                          domain={[0.45, 0.85]}
+                          domain={[0.35, 1.0]}
                           tick={{ fontSize: 11, fill: axisTickColor }}
+                          label={{
+                            value: "MATTR",
+                            angle: -90,
+                            position: "insideLeft",
+                            style: { fontSize: 11, fill: axisTickColor },
+                          }}
                         />
                       )}
                       {(chartMode === "combinada" || chartMode === "pausas") && (
                         <YAxis
                           yAxisId="right"
                           orientation={chartMode === "pausas" ? "left" : "right"}
-                          domain={[0.5, 3.6]}
+                          domain={[0, "auto"]}
                           tick={{ fontSize: 11, fill: axisTickColor }}
+                          label={{
+                            value: "Pausa (s)",
+                            angle: chartMode === "pausas" ? -90 : 90,
+                            position: chartMode === "pausas" ? "insideLeft" : "insideRight",
+                            style: { fontSize: 11, fill: axisTickColor },
+                          }}
                         />
                       )}
                       <Tooltip
@@ -547,12 +595,19 @@ export const CaregiverDashboard: React.FC<Props> = ({
                           fontSize: "12px",
                         }}
                       />
+                      <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "6px" }} />
                       <ReferenceArea
                         yAxisId={chartMode === "pausas" ? "right" : "left"}
                         x1="Día 1"
                         x2="Día 14"
                         fill={isDark ? "#22B8CF" : "#0E7490"}
-                        fillOpacity={0.08}
+                        fillOpacity={0.09}
+                        label={{
+                          value: "Base D1–D14",
+                          position: "insideTopLeft",
+                          fill: axisTickColor,
+                          fontSize: 11,
+                        }}
                       />
                       {(chartMode === "combinada" || chartMode === "mattr") && (
                         <Line
@@ -598,15 +653,15 @@ export const CaregiverDashboard: React.FC<Props> = ({
                       <BellRing className="w-4 h-4" style={{ color: "var(--amber)" }} />
                       Enviar Aviso Preventivo Nivel 2
                     </button>
-                    <a
-                      href={api.reportPdfUrl()}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleDownloadPdf}
                       className="btn-primary text-xs"
                     >
                       <Download className="w-4 h-4" />
                       Descargar Reporte Clínico (PDF)
-                    </a>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -692,12 +747,35 @@ export const CaregiverDashboard: React.FC<Props> = ({
                         <div className="flex items-center justify-between gap-2 font-semibold">
                           <span>{log.title}</span>
                           <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                            {log.created_at.slice(11, 16)}
+                            {formatLocalTime(log.created_at)}
                           </span>
                         </div>
                         <p className="whitespace-pre-line leading-relaxed" style={{ color: "var(--text-muted)" }}>
                           {log.message}
                         </p>
+                        <div className="pt-1 flex justify-end">
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{
+                              backgroundColor: log.delivered
+                                ? "var(--emerald-soft)"
+                                : log.channel_status === "queued_async"
+                                  ? "var(--amber-soft)"
+                                  : "var(--surface)",
+                              color: log.delivered
+                                ? "var(--emerald)"
+                                : log.channel_status === "queued_async"
+                                  ? "var(--amber)"
+                                  : "var(--text-muted)",
+                            }}
+                          >
+                            {log.delivered
+                              ? "Entregado en Telegram"
+                              : log.channel_status === "queued_async"
+                                ? "Enviando a Telegram"
+                                : "Vista previa local"}
+                          </span>
+                        </div>
                       </article>
                     ))
                   )}
@@ -1148,7 +1226,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
               <section className="clinical-card p-5 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">Inspector del Último Turno Ejecutado</h3>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {lastTurnResult.audio_data_uri && (
                       <button
                         type="button"
@@ -1158,6 +1236,14 @@ export const CaregiverDashboard: React.FC<Props> = ({
                         <Volume2 className="w-3.5 h-3.5" />
                         Escuchar voz Edge-TTS
                       </button>
+                    )}
+                    {lastTurnResult.engine_used && (
+                      <span
+                        className="text-xs px-2.5 py-1 rounded-full font-medium"
+                        style={{ backgroundColor: "var(--emerald-soft)", color: "var(--emerald)" }}
+                      >
+                        Motor: {lastTurnResult.engine_used}
+                      </span>
                     )}
                     <span
                       className="text-xs px-2.5 py-1 rounded-full font-medium"
@@ -1236,7 +1322,7 @@ export const CaregiverDashboard: React.FC<Props> = ({
                     <tbody className="tabular-nums">
                       {state.recent_turns.map((t) => (
                         <tr key={t.id} className="border-b" style={{ borderColor: "var(--border)" }}>
-                          <td className="py-2 pr-3">{t.created_at.slice(11, 16)}</td>
+                          <td className="py-2 pr-3">{formatLocalTime(t.created_at)}</td>
                           <td className="py-2 pr-3 font-medium">{t.mattr.toFixed(3)}</td>
                           <td className="py-2 pr-3">{t.max_pause_sec.toFixed(2)}s</td>
                           <td className="py-2 pr-3">{t.anomic_count}</td>

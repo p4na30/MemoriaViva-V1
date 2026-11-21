@@ -304,14 +304,32 @@ class StorageManager:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         img.save(dest_path, format="JPEG", quality=88)
 
+    def profile_photos_dir(self, profile_id: str = "don_manuel") -> Path:
+        """Isolate each patient's photo album in its own subdirectory."""
+        safe_id = "".join(c for c in profile_id if c.isalnum() or c in ("_", "-")) or "don_manuel"
+        pdir = self.photos_dir / safe_id
+        pdir.mkdir(parents=True, exist_ok=True)
+        return pdir
+
+    def resolve_photo_file(self, filename: str, profile_id: str = "don_manuel") -> Optional[Path]:
+        """Resolve a photo path in the active profile directory (with legacy root fallback)."""
+        safe_name = Path(filename).name
+        scoped = self.profile_photos_dir(profile_id) / safe_name
+        if scoped.exists():
+            return scoped
+        legacy = self.photos_dir / safe_name
+        if legacy.exists():
+            return legacy
+        return None
+
     def ensure_sample_photos(self, profile_id: str = "don_manuel") -> List[Dict[str, Any]]:
         """Populate at least 10 themed nostalgic postcards from AI sample_assets or Pillow fallback."""
         manifest = self._load_sample_manifest()
-        self.photos_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = self.profile_photos_dir(profile_id)
 
         for idx, item in enumerate(manifest, start=1):
             filename = item["filename"]
-            dest = self.photos_dir / filename
+            dest = target_dir / filename
             src = self.sample_assets_dir / filename
             if not dest.exists():
                 if src.exists() and src.stat().st_size > 1024:
@@ -337,12 +355,12 @@ class StorageManager:
 
     def list_photos(self, profile_id: str = "don_manuel") -> List[Dict[str, Any]]:
         """Return ordered album photos with URL, title, caption, and memory_album_theme."""
-        self.photos_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = self.profile_photos_dir(profile_id)
         meta_map = self.db.get_photo_metadata_map(profile_id)
         files = sorted(
             [
                 p
-                for p in self.photos_dir.iterdir()
+                for p in target_dir.iterdir()
                 if p.is_file() and p.suffix.lower() in ALLOWED_IMAGE_EXTENSIONS
             ],
             key=lambda p: p.name,
@@ -380,14 +398,12 @@ class StorageManager:
         caption: str = "",
         theme: str = "familia_hogar",
     ) -> Dict[str, Any]:
-        ext = Path(original_filename).suffix.lower()
-        if ext not in ALLOWED_IMAGE_EXTENSIONS:
-            ext = ".jpg"
         safe_stem = "".join(c for c in Path(original_filename).stem if c.isalnum() or c in ("_", "-"))[:32]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = f"custom_{stamp}_{safe_stem or 'foto'}{ext}"
-        dest = self.photos_dir / filename
-        self.photos_dir.mkdir(parents=True, exist_ok=True)
+        # Always use .jpg extension since Pillow normalizes uploads as JPEG
+        filename = f"custom_{stamp}_{safe_stem or 'foto'}.jpg"
+        target_dir = self.profile_photos_dir(profile_id)
+        dest = target_dir / filename
 
         # Validate & normalize image with Pillow to prevent corrupted uploads
         from io import BytesIO
@@ -417,11 +433,11 @@ class StorageManager:
 
     def delete_photo(self, filename: str, profile_id: str = "don_manuel") -> bool:
         safe_name = Path(filename).name
-        target = self.photos_dir / safe_name
-        if not target.exists():
+        target = self.resolve_photo_file(safe_name, profile_id)
+        if not target or not target.exists():
             return False
         target.unlink(missing_ok=True)
-        self.db.delete_photo_metadata(safe_name)
+        self.db.delete_photo_metadata(safe_name, profile_id=profile_id)
         return True
 
     def find_photo_for_theme(

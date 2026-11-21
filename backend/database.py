@@ -153,13 +153,14 @@ class DatabaseManager:
                 );
 
                 CREATE TABLE IF NOT EXISTS photo_metadata (
-                    filename TEXT PRIMARY KEY,
                     profile_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
                     title TEXT NOT NULL,
                     caption TEXT NOT NULL,
                     theme TEXT NOT NULL DEFAULT 'familia_hogar',
                     is_sample INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, filename)
                 );
 
                 CREATE TABLE IF NOT EXISTS consent_events (
@@ -183,6 +184,31 @@ class DatabaseManager:
                 );
                 """
             )
+            # Auto-migrate legacy single-PK photo_metadata table to composite (profile_id, filename)
+            cols = conn.execute("PRAGMA table_info(photo_metadata)").fetchall()
+            pk_cols = [c["name"] for c in cols if c["pk"] > 0]
+            if pk_cols == ["filename"]:
+                conn.executescript(
+                    """
+                    ALTER TABLE photo_metadata RENAME TO photo_metadata_legacy;
+                    CREATE TABLE photo_metadata (
+                        profile_id TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        caption TEXT NOT NULL,
+                        theme TEXT NOT NULL DEFAULT 'familia_hogar',
+                        is_sample INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (profile_id, filename)
+                    );
+                    INSERT OR REPLACE INTO photo_metadata (
+                        profile_id, filename, title, caption, theme, is_sample, created_at
+                    )
+                    SELECT profile_id, filename, title, caption, theme, is_sample, created_at
+                    FROM photo_metadata_legacy;
+                    DROP TABLE photo_metadata_legacy;
+                    """
+                )
 
     @staticmethod
     def _now_iso() -> str:
@@ -505,9 +531,15 @@ class DatabaseManager:
                 out[item["filename"]] = item
             return out
 
-    def delete_photo_metadata(self, filename: str) -> None:
+    def delete_photo_metadata(self, filename: str, profile_id: Optional[str] = None) -> None:
         with self._connection(write=True) as conn:
-            conn.execute("DELETE FROM photo_metadata WHERE filename = ?", (filename,))
+            if profile_id:
+                conn.execute(
+                    "DELETE FROM photo_metadata WHERE profile_id = ? AND filename = ?",
+                    (profile_id, filename),
+                )
+            else:
+                conn.execute("DELETE FROM photo_metadata WHERE filename = ?", (filename,))
 
     # ------------------------------------------------------------------
     # Assisted Dual Consent Events

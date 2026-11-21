@@ -15,6 +15,7 @@ from backend.config import (
     MEMORY_ALBUM_THEMES,
     get_gemini_api_key,
     get_gemini_model_chain,
+    mark_model_unavailable,
 )
 
 
@@ -330,7 +331,11 @@ def _call_gemini_with_fallback(
             text = (response.text or "").strip()
             if text:
                 return text, model_name
-        except Exception:
+        except Exception as exc:
+            err_txt = str(exc).upper()
+            if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
+                mark_model_unavailable(model_name)
+                continue
             # If a model rejects thinking_budget=0, retry once without thinking_config before advancing
             try:
                 config_kwargs.pop("thinking_config", None)
@@ -342,7 +347,10 @@ def _call_gemini_with_fallback(
                 text = (response.text or "").strip()
                 if text:
                     return text, model_name
-            except Exception:
+            except Exception as exc2:
+                err_txt2 = str(exc2).upper()
+                if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
+                    mark_model_unavailable(model_name)
                 continue
 
     return "", ""
@@ -374,11 +382,18 @@ def generate_companion_response(
                 parsed["assistant_reply"] = enforce_word_limit(parsed["assistant_reply"])
                 if parsed["memory_album_theme"] not in MEMORY_ALBUM_THEMES:
                     parsed["memory_album_theme"] = infer_visual_theme(user_text)
-                if is_obvious_crisis:
+                if is_obvious_crisis or parsed.get("emergency_triggered"):
                     parsed["emergency_triggered"] = True
                     parsed["emotional_state"] = "crisis_desorientacion"
-                    # Remove any accidental cognitive question marks during acute crisis
-                    parsed["assistant_reply"] = parsed["assistant_reply"].replace("¿", "").replace("?", ".")
+                    # Clean Naomi Feil guardrail: if LLM slipped a question in crisis, substitute validated contention
+                    if "?" in parsed["assistant_reply"] or "¿" in parsed["assistant_reply"]:
+                        safe_feil = _deterministic_fallback_reply(
+                            user_text=user_text,
+                            profile=profile,
+                            repetition_info=repetition_info,
+                            demo_scenario_id="demo_3_crisis",
+                        )
+                        parsed["assistant_reply"] = safe_feil["assistant_reply"]
                 parsed["engine_used"] = used_model
                 return parsed
         except Exception:
@@ -446,6 +461,6 @@ def generate_consent_greeting(profile: Dict[str, Any]) -> str:
     ) or profile.get("contacto_emergencia_telegram", {}).get("nombre", "Laura")
     return (
         f"Hola {nombre}, soy MemoriaViva, su compañero de fotos y plática. "
-        f"Nunca grabo ni guardo su voz; solo le comparto a {cuidador} un breve resumen cariñoso "
-        "para que sepan que usted está bien."
+        "Nunca guardo grabaciones de su voz; solo la escucho al momento para platicar, "
+        f"y le comparto a {cuidador} un breve resumen cariñoso para que sepan que usted está bien."
     )

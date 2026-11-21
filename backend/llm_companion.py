@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -17,6 +18,29 @@ from backend.config import (
     get_gemini_model_chain,
     mark_model_unavailable,
 )
+
+logger = logging.getLogger("memoriaviva.llm")
+
+_LAST_GEMINI_DIAGNOSTICS: Dict[str, Optional[str]] = {
+    "last_model": None,
+    "last_error": None,
+}
+
+
+def _sanitize_gemini_error(exc: Exception, api_key: str = "") -> str:
+    """Return a concise, secret-free diagnostic string for /api/health and Cloud Run logs."""
+    msg = str(exc).replace("\n", " ").strip()
+    if api_key:
+        msg = msg.replace(api_key, "[REDACTED]")
+    msg = re.sub(r"AIza[0-9A-Za-z\-_]{10,}", "[REDACTED_KEY]", msg)
+    if len(msg) > 180:
+        msg = msg[:177] + "..."
+    return f"{type(exc).__name__}: {msg}"
+
+
+def get_gemini_diagnostics() -> Dict[str, Optional[str]]:
+    """Return non-sensitive last Gemini model and error diagnostics."""
+    return dict(_LAST_GEMINI_DIAGNOSTICS)
 
 
 class CompanionStructuredOutput(BaseModel):
@@ -330,8 +354,13 @@ def _call_gemini_with_fallback(
             )
             text = (response.text or "").strip()
             if text:
+                _LAST_GEMINI_DIAGNOSTICS["last_model"] = model_name
+                _LAST_GEMINI_DIAGNOSTICS["last_error"] = None
                 return text, model_name
         except Exception as exc:
+            safe_err = _sanitize_gemini_error(exc, api_key)
+            _LAST_GEMINI_DIAGNOSTICS["last_error"] = f"{model_name} -> {safe_err}"
+            logger.warning("Gemini model %s failed: %s", model_name, safe_err)
             err_txt = str(exc).upper()
             if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
                 mark_model_unavailable(model_name)
@@ -346,8 +375,13 @@ def _call_gemini_with_fallback(
                 )
                 text = (response.text or "").strip()
                 if text:
+                    _LAST_GEMINI_DIAGNOSTICS["last_model"] = model_name
+                    _LAST_GEMINI_DIAGNOSTICS["last_error"] = None
                     return text, model_name
             except Exception as exc2:
+                safe_err2 = _sanitize_gemini_error(exc2, api_key)
+                _LAST_GEMINI_DIAGNOSTICS["last_error"] = f"{model_name} -> {safe_err2}"
+                logger.warning("Gemini model %s retry failed: %s", model_name, safe_err2)
                 err_txt2 = str(exc2).upper()
                 if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
                     mark_model_unavailable(model_name)
@@ -396,8 +430,10 @@ def generate_companion_response(
                         parsed["assistant_reply"] = safe_feil["assistant_reply"]
                 parsed["engine_used"] = used_model
                 return parsed
-        except Exception:
-            pass
+        except Exception as exc:
+            safe_err = _sanitize_gemini_error(exc, get_gemini_api_key())
+            _LAST_GEMINI_DIAGNOSTICS["last_error"] = f"parse -> {safe_err}"
+            logger.warning("Gemini companion response handling failed: %s", safe_err)
 
     return _deterministic_fallback_reply(
         user_text=user_text,

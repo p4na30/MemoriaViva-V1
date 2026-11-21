@@ -353,3 +353,37 @@ def test_multiple_rms_pauses_injection_and_timezone_sundowning() -> None:
     utc_morning = datetime(2026, 11, 21, 16, 0, tzinfo=timezone.utc)
     assert classify_circadian_period(utc_morning) == "matutino"
 
+
+def test_gemini_diagnostics_records_sanitized_error_without_leaking_key(monkeypatch) -> None:
+    """Verify Gemini errors are captured for /api/health diagnostics without leaking API keys."""
+    from backend.config import clear_unavailable_models
+    from backend.llm_companion import get_gemini_diagnostics
+
+    clear_unavailable_models()
+    fake_secret = "AIzaSySecretKey1234567890ABCDEF"
+    monkeypatch.setenv("GEMINI_API_KEY", fake_secret)
+
+    class FailingModels:
+        def generate_content(self, model, contents, config=None):
+            raise RuntimeError(f"403 PERMISSION_DENIED for key {fake_secret}")
+
+    class FailingClient:
+        def __init__(self, api_key=None):
+            self.models = FailingModels()
+
+    from google import genai as real_genai
+
+    monkeypatch.setattr(real_genai, "Client", FailingClient)
+
+    storage = StorageManager()
+    profile = storage.load_demo_seed_profile()
+    res = generate_companion_response("Hola, hoy me siento tranquilo.", profile, [], {"is_repetition": False})
+    assert res["engine_used"] == "deterministic_fallback"
+
+    diag = get_gemini_diagnostics()
+    assert diag["last_error"] is not None
+    assert "403 PERMISSION_DENIED" in diag["last_error"]
+    assert fake_secret not in diag["last_error"]
+    assert "[REDACTED" in diag["last_error"]
+
+

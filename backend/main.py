@@ -42,6 +42,7 @@ from backend.config import (
     get_app_mode,
     get_gemini_api_key,
     get_telegram_bot_token,
+    get_telegram_bot_username,
     update_runtime_credentials,
 )
 from backend.database import DatabaseManager
@@ -49,6 +50,7 @@ from backend.llm_companion import (
     generate_companion_response,
     generate_consent_greeting,
     generate_photo_starter,
+    get_gemini_diagnostics,
 )
 from backend.pdf_report import generate_clinical_pdf_bytes
 from backend.storage_manager import StorageManager, generate_link_code, hash_pin, verify_pin
@@ -236,7 +238,9 @@ def create_app(
             "app_mode": get_app_mode(),
             "cloud_run_shield": IS_CLOUD_RUN,
             "gemini_configured": bool(get_gemini_api_key()),
+            "gemini": get_gemini_diagnostics(),
             "telegram_configured": bool(get_telegram_bot_token()),
+            "telegram_bot_username": get_telegram_bot_username(),
         }
 
     @app.get("/api/state")

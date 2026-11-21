@@ -21,13 +21,26 @@ if not DATA_DIR.is_absolute():
 
 PROFILES_DIR = DATA_DIR / "profiles"
 PHOTOS_DIR = DATA_DIR / "photos"
-SAMPLE_ASSETS_DIR = DATA_DIR / "sample_assets"
-FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
+SEED_FALLBACK_DIR = BASE_DIR / "seed_data"
 
+
+def _resolve_seed_path(relative: str) -> Path:
+    """Resolve immutable seed files with fallback to /app/seed_data when Cloud Storage mounts /app/data."""
+    primary = DATA_DIR / relative
+    if primary.exists():
+        return primary
+    fallback = SEED_FALLBACK_DIR / relative
+    if fallback.exists():
+        return fallback
+    return primary
+
+
+SAMPLE_ASSETS_DIR = _resolve_seed_path("sample_assets")
 ACCOUNT_CONFIG_PATH = DATA_DIR / "account_config.json"
-HISTORY_SEED_PATH = DATA_DIR / "history_21_days.json"
-DEMO_PROFILE_PATH = PROFILES_DIR / "don_manuel_simulacion.json"
+HISTORY_SEED_PATH = _resolve_seed_path("history_21_days.json")
+DEMO_PROFILE_PATH = _resolve_seed_path("profiles/don_manuel_simulacion.json")
 SQLITE_PERSISTENT_PATH = DATA_DIR / "memoriaviva.db"
+FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 # Cloud Run / GCS FUSE detection for SQLite shielding
 IS_CLOUD_RUN = bool(os.getenv("K_SERVICE")) or os.getenv("MV_CLOUD_SYNC", "0") == "1"

@@ -1,0 +1,19 @@
+services:
+  memoriaviva-rise:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: memoriaviva-rise:latest
+    container_name: memoriaviva-rise
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - PORT=8080
+      - MV_DATA_DIR=/app/data
+      - MV_CLOUD_SYNC=0
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

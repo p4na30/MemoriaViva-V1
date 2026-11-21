@@ -1,0 +1,17 @@
+.git/
+.github/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+frontend/node_modules/
+frontend/dist/
+frontend/android/
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+data/memoriaviva.db*
+data/account_config.json
+data/photos/
+*.log

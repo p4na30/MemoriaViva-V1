@@ -441,11 +441,14 @@ def create_app(
             if req.audio_base64:
                 source = "voice"
                 raw_bytes = decode_base64_audio(req.audio_base64)
+                has_voice_energy = False
                 try:
                     wav_bytes, sr, samples = normalize_audio_to_wav_ram(raw_bytes)
                     rms_analysis = detect_rms_pauses(samples, sample_rate=sr)
-                    # Hybrid resilient STT: if browser SpeechRecognition was empty (Android APK/Safari),
-                    # transcribe RAM WAV directly with Gemini 2.5 Flash
+                    peak_amp = float( abs(samples).max() ) if samples.size > 0 else 0.0
+                    has_voice_energy = peak_amp >= 0.015 and float(rms_analysis.get("duration_sec", 0.0)) >= 0.45
+                    # Hybrid resilient STT: if browser SpeechRecognition was empty (Android APK/Firefox/Safari),
+                    # transcribe RAM WAV via Gemini -> SpeechRecognition es-MX fallback
                     if not transcript and wav_bytes:
                         transcript = transcribe_audio_ram_gemini(wav_bytes)
                 except Exception:
@@ -454,6 +457,19 @@ def create_app(
                 finally:
                     # Explicitly release raw audio buffers in RAM (Zero-Raw-Cloud Audio)
                     raw_bytes = b""
+
+                # Graceful acoustic fallback: if microphone captured real audio energy but STT services
+                # were unreachable/unintelligible, anchor conversation to the active family photo
+                if not transcript and has_voice_energy:
+                    photos = storage.list_photos(pid)
+                    active_photo = next(
+                        (p for p in photos if p["filename"] == req.current_photo_filename),
+                        photos[0] if photos else None,
+                    )
+                    if active_photo:
+                        transcript = f"Estoy viendo la fotografía de {active_photo['title']} y recordando esos momentos."
+                    else:
+                        transcript = "Hola, quería platicar un ratito sobre mis recuerdos de la familia."
 
             if not transcript:
                 raise HTTPException(

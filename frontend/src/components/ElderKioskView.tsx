@@ -246,7 +246,9 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
     const recorder = mediaRecorderRef.current;
     const stopPromise = new Promise<Blob | null>((resolve) => {
       if (!recorder || recorder.state === "inactive") {
-        resolve(null);
+        const fallbackBlob =
+          chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: "audio/webm" }) : null;
+        resolve(fallbackBlob);
         return;
       }
       recorder.onstop = () => {
@@ -255,9 +257,14 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         resolve(blob);
       };
       try {
+        if (recorder.state === "recording") {
+          recorder.requestData();
+        }
         recorder.stop();
       } catch {
-        resolve(null);
+        const fallbackBlob =
+          chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: "audio/webm" }) : null;
+        resolve(fallbackBlob);
       }
     });
 
@@ -266,9 +273,9 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
     cleanupCaptureResources();
 
     try {
-      const audioBase64 = audioBlob && audioBlob.size > 400 ? await blobToBase64(audioBlob) : undefined;
+      const audioBase64 = audioBlob && audioBlob.size > 150 ? await blobToBase64(audioBlob) : undefined;
       if (!audioBase64 && !finalTranscript) {
-        notify("No se escuchó voz. Intenta hablar nuevamente o usa un acto de demostración.", "info");
+        notify("No se escuchó voz. Intenta hablar más cerca del micrófono o mantén presionado el botón.", "info");
         return;
       }
       const res = await api.submitTurn({
@@ -298,10 +305,15 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       setFamilyBanner(null);
       setEmergencyActive(false);
 
-      const preferredMime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ];
+      const preferredMime =
+        typeof MediaRecorder.isTypeSupported === "function"
+          ? mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || ""
           : "";
 
       const recorder = preferredMime
@@ -312,7 +324,7 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
         if (ev.data && ev.data.size > 0) chunksRef.current.push(ev.data);
       };
       mediaRecorderRef.current = recorder;
-      recorder.start(250);
+      recorder.start(200);
 
       // Optional live transcript preview via Web SpeechRecognition (es-MX)
       const SpeechRecCtor =
@@ -329,14 +341,17 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
             for (let i = 0; i < ev.results.length; i++) {
               combined += ev.results[i][0].transcript + " ";
             }
-            transcriptRef.current = combined.trim();
-            setLiveTranscript(combined.trim());
+            const clean = combined.trim();
+            if (clean) {
+              transcriptRef.current = clean;
+              setLiveTranscript(clean);
+            }
           };
           rec.onerror = () => {};
           rec.start();
           speechRecRef.current = rec;
         } catch {
-          // Graceful fallback to backend Gemini RAM STT
+          // Graceful fallback to backend RAM STT (Gemini / SpeechRecognition es-MX)
         }
       }
 
@@ -346,8 +361,14 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
       // Auto-VAD 3.8s inclusive silence detector for single-tap mode
       if (voiceMode === "auto_vad") {
         try {
-          const ctx = new AudioContext();
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          const ctx = new AudioCtx();
           audioCtxRef.current = ctx;
+          if (ctx.state === "suspended") {
+            await ctx.resume();
+          }
           const src = ctx.createMediaStreamSource(stream);
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 1024;
@@ -356,35 +377,42 @@ export const ElderKioskView: React.FC<Props> = ({ state, onStateChange, onUnlock
           let hasSpoken = false;
           let lastVoiceAt = Date.now();
           const startedAt = Date.now();
-          // Calibrate ambient noise floor over the first 400ms for adaptive Auto-VAD
-          const calibrationSamples: number[] = [];
-          let adaptiveThreshold = 0.03;
+          let noiseFloor = 0.012;
+          let noiseSamples = 0;
 
           vadTimerRef.current = window.setInterval(() => {
             if (!listeningRef.current) return;
             analyser.getByteTimeDomainData(data);
+            // Compute DC-offset-free RMS energy
+            let mean = 0;
+            for (let i = 0; i < data.length; i++) {
+              mean += (data[i] - 128) / 128;
+            }
+            mean /= data.length;
             let sum = 0;
             for (let i = 0; i < data.length; i++) {
-              const v = (data[i] - 128) / 128;
+              const v = (data[i] - 128) / 128 - mean;
               sum += v * v;
             }
             const rms = Math.sqrt(sum / data.length);
             const totalElapsed = Date.now() - startedAt;
 
-            if (totalElapsed <= 420) {
-              calibrationSamples.push(rms);
-              const avgNoise =
-                calibrationSamples.reduce((acc, val) => acc + val, 0) / calibrationSamples.length;
-              adaptiveThreshold = Math.max(0.025, Math.min(0.14, avgNoise * 2.2));
-              return;
+            if (!hasSpoken && noiseSamples < 3 && rms < 0.03) {
+              noiseFloor = (noiseFloor * noiseSamples + rms) / (noiseSamples + 1);
+              noiseSamples += 1;
             }
+            const adaptiveThreshold = Math.max(0.014, Math.min(0.045, noiseFloor * 1.9));
 
-            if (rms > adaptiveThreshold) {
-              hasSpoken = true;
-              lastVoiceAt = Date.now();
+            if (rms > adaptiveThreshold || transcriptRef.current.length > 0) {
+              if (!hasSpoken) {
+                hasSpoken = true;
+              }
+              if (rms > adaptiveThreshold) {
+                lastVoiceAt = Date.now();
+              }
             }
             const silenceElapsed = Date.now() - lastVoiceAt;
-            if ((hasSpoken && silenceElapsed >= vadSilenceMs) || totalElapsed >= 25000) {
+            if ((hasSpoken && silenceElapsed >= vadSilenceMs) || totalElapsed >= 18000) {
               stopListeningAndSubmit();
             }
           }, 120);

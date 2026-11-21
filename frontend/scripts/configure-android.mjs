@@ -80,6 +80,9 @@ public class MainActivity extends BridgeActivity {
 
         // Extend Capacitor's BridgeWebChromeClient so microphone + file uploads + JS dialogs all work
         if (this.bridge != null && this.bridge.getWebView() != null) {
+            this.bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);
+            this.bridge.getWebView().getSettings().setJavaScriptEnabled(true);
+            this.bridge.getWebView().getSettings().setDomStorageEnabled(true);
             this.bridge.getWebView().setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
                 @Override
                 public void onPermissionRequest(final PermissionRequest request) {

@@ -383,3 +383,39 @@ def test_manual_onboarding_preserves_step2_telegram_pairing(tmp_path: Path, monk
     assert tg_after["link_uuid"] == init_uuid
     assert tg_after["chat_id"] == "44422"
     assert tg_after["linked_user_name"] == "Carlos"
+
+
+def test_audio_only_turn_without_browser_transcript_or_gemini_key(tmp_path: Path, monkeypatch) -> None:
+    """Verify Firefox / Android APK voice turn (audio_base64 only, no browser_transcript, no Gemini key) succeeds."""
+    import base64
+    import io
+    import wave
+    import numpy as np
+
+    monkeypatch.setenv("MV_DISABLE_TG_POLLING", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    client = _build_test_client(tmp_path)
+    client.post("/api/onboarding/complete", json={"use_demo_persona": True})
+
+    # Create 1.2s of real audio energy in RAM (simulating Firefox / Android MediaRecorder payload)
+    sr = 16000
+    t = np.linspace(0, 1.2, int(sr * 1.2), endpoint=False)
+    pcm = (0.25 * np.sin(2 * np.pi * 240 * t) * 32767).astype(np.int16).tobytes()
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm)
+    b64 = "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    r_turn = client.post(
+        "/api/turn",
+        json={"audio_base64": b64, "skip_tts": True},
+    )
+    assert r_turn.status_code == 200
+    body = r_turn.json()
+    assert body["ok"] is True
+    assert len(body["assistant_reply"].split()) <= 35

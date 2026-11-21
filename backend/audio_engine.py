@@ -333,64 +333,83 @@ def merge_rms_pauses_into_timestamps(
     return result
 
 
-def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
-    """Fallback multimodal STT using Gemini fallback chain with thinking_budget=0 directly on RAM WAV.
+def transcribe_audio_ram_google_free(wav_bytes: bytes) -> str:
+    """Zero-API-Key Spanish (es-MX) STT in RAM via SpeechRecognition (works on Firefox & Android APK)."""
+    if not wav_bytes:
+        return ""
+    try:
+        import speech_recognition as sr
 
-    Ensures live voice capture works on Android Capacitor WebView, Firefox, and Safari
-    even when browser Web SpeechRecognition is unavailable.
-    """
-    api_key = get_gemini_api_key()
-    if not api_key or not wav_bytes:
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
+            audio_data = recognizer.record(source)
+        text = recognizer.recognize_google(audio_data, language="es-MX")
+        return str(text or "").strip()
+    except Exception:
         return ""
 
-    try:
-        from google import genai
-        from google.genai import types
 
-        client = genai.Client(api_key=api_key)
-        contents = [
-            types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
-            (
-                "Transcribe fielmente en español mexicano lo que dice el adulto mayor en este audio. "
-                "Conserva muletillas naturales como 'este', 'eh', 'mmm' si existen. "
-                "Devuelve únicamente el texto transcrito sin comentarios adicionales."
-            ),
-        ]
-        for model_name in get_gemini_model_chain():
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    ),
-                )
-                text = (response.text or "").strip()
-                if text:
-                    return text
-            except Exception as exc:
-                err_txt = str(exc).upper()
-                if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
-                    mark_model_unavailable(model_name)
-                    continue
+def transcribe_audio_ram_gemini(wav_bytes: bytes) -> str:
+    """Resilient multimodal STT on RAM WAV: tries Gemini fallback chain first, then zero-key es-MX STT.
+
+    Ensures live voice capture works on Android Capacitor WebView, Firefox, Safari, and Chrome
+    even when browser Web SpeechRecognition is unavailable or GEMINI_API_KEY is unset/quota-limited.
+    """
+    if not wav_bytes:
+        return ""
+
+    api_key = get_gemini_api_key()
+    if api_key:
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=api_key)
+            contents = [
+                types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
+                (
+                    "Transcribe fielmente en español mexicano lo que dice el adulto mayor en este audio. "
+                    "Conserva muletillas naturales como 'este', 'eh', 'mmm' si existen. "
+                    "Devuelve únicamente el texto transcrito sin comentarios adicionales."
+                ),
+            ]
+            for model_name in get_gemini_model_chain():
                 try:
                     response = client.models.generate_content(
                         model=model_name,
                         contents=contents,
-                        config=types.GenerateContentConfig(temperature=0.0),
+                        config=types.GenerateContentConfig(
+                            temperature=0.0,
+                            thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        ),
                     )
                     text = (response.text or "").strip()
                     if text:
                         return text
-                except Exception as exc2:
-                    err_txt2 = str(exc2).upper()
-                    if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
+                except Exception as exc:
+                    err_txt = str(exc).upper()
+                    if "404" in err_txt or "NOT_FOUND" in err_txt or "NOT FOUND" in err_txt:
                         mark_model_unavailable(model_name)
-                    continue
-        return ""
-    except Exception:
-        return ""
+                        continue
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(temperature=0.0),
+                        )
+                        text = (response.text or "").strip()
+                        if text:
+                            return text
+                    except Exception as exc2:
+                        err_txt2 = str(exc2).upper()
+                        if "404" in err_txt2 or "NOT_FOUND" in err_txt2 or "NOT FOUND" in err_txt2:
+                            mark_model_unavailable(model_name)
+                        continue
+        except Exception:
+            pass
+
+    # Automatic zero-key fallback (SpeechRecognition es-MX in RAM)
+    return transcribe_audio_ram_google_free(wav_bytes)
 
 
 async def _edge_tts_bytes(text: str, voice: str, rate: str, pitch: str) -> bytes:

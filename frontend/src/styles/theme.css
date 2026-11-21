@@ -1,0 +1,189 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme="light"] {
+  --bg: #F6F8FA;
+  --surface: #FFFFFF;
+  --surface-subtle: #F1F5F9;
+  --border: #E2E8F0;
+  --text: #0F172A;
+  --text-muted: #475569;
+  --primary: #0E7490;
+  --primary-hover: #0B5E75;
+  --primary-soft: #ECFEFF;
+  --amber: #D97706;
+  --amber-soft: #FEF3C7;
+  --emerald: #059669;
+  --emerald-soft: #D1FAE5;
+  --danger: #DC2626;
+  --danger-soft: #FEE2E2;
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+[data-theme="dark"] {
+  --bg: #0F1419;
+  --surface: #171E26;
+  --surface-subtle: #1E2732;
+  --border: #26313E;
+  --text: #F1F5F9;
+  --text-muted: #94A3B8;
+  --primary: #22B8CF;
+  --primary-hover: #3BC9DB;
+  --primary-soft: #12323D;
+  --amber: #F59E0B;
+  --amber-soft: #3B2908;
+  --emerald: #10B981;
+  --emerald-soft: #0B3328;
+  --danger: #EF4444;
+  --danger-soft: #3D1418;
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Strict Button Hierarchy: Primary, Secondary, Danger */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.125rem;
+  border-radius: 0.625rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  background-color: var(--primary);
+  color: #ffffff;
+  border: 1px solid transparent;
+  transition: background-color 150ms ease, transform 120ms ease, opacity 150ms ease;
+  cursor: pointer;
+}
+[data-theme="dark"] .btn-primary {
+  color: #091319;
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  background-color: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  transition: background-color 150ms ease, border-color 150ms ease;
+  cursor: pointer;
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--surface-subtle);
+}
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  background-color: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  transition: opacity 150ms ease, filter 150ms ease;
+  cursor: pointer;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+.btn-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.clinical-card {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  box-shadow: var(--shadow-card);
+}
+
+.clinical-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  color: var(--text);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.clinical-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+/* Emotional Breathing Aura (4-second calm cycle) */
+@keyframes auraBreathe {
+  0%,
+  100% {
+    transform: scale(0.92);
+    opacity: 0.78;
+    box-shadow: 0 0 40px 10px rgba(34, 184, 207, 0.35), 0 0 90px 24px rgba(14, 116, 144, 0.25);
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+    box-shadow: 0 0 65px 22px rgba(34, 184, 207, 0.58), 0 0 130px 44px rgba(14, 116, 144, 0.38);
+  }
+}
+
+.aura-orb {
+  background: radial-gradient(circle at 35% 35%, #67E8F9 0%, #22B8CF 42%, #0E7490 78%, rgba(14, 116, 144, 0.2) 100%);
+  animation: auraBreathe 4s ease-in-out infinite;
+}
+
+@keyframes photoCrossfade {
+  from {
+    opacity: 0.25;
+    transform: scale(1.03);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.photo-transition {
+  animation: photoCrossfade 700ms ease-out forwards;
+}

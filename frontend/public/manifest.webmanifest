@@ -1,0 +1,10 @@
+{
+  "name": "MemoriaViva RISE",
+  "short_name": "MemoriaViva",
+  "description": "Terapia de Reminiscencia y Biomarcadores Pasivos del Habla para Adultos Mayores",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F1419",
+  "theme_color": "#0E7490",
+  "lang": "es-MX"
+}

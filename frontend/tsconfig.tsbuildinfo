@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/api/client.ts","./src/components/CaregiverDashboard.tsx","./src/components/ElderKioskView.tsx","./src/components/OnboardingWizard.tsx","./src/components/RiseGovernancePanel.tsx","./src/components/ToastProvider.tsx"],"version":"5.9.3"}
